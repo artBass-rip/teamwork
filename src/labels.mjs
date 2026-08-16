@@ -44,6 +44,14 @@ export class LabelStore {
   all() { return this.read(); }
   list(issueKey) { return this.read()[issueKey] || []; }
 
+  catalog() {
+    const counts = new Map();
+    for (const values of Object.values(this.read())) {
+      for (const label of values) counts.set(label, (counts.get(label) || 0) + 1);
+    }
+    return [...counts].map(([name, issues]) => ({name, issues})).sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+  }
+
   set(issueKey, values) {
     const labels = normalizeLabels(values);
     const store = this.read();
@@ -51,6 +59,22 @@ export class LabelStore {
     else delete store[issueKey];
     this.write(store);
     return labels;
+  }
+
+  removeEverywhere(value) {
+    const [label] = normalizeLabels([value]);
+    if (!label) throw new Error('Метка не указана');
+    const store = this.read();
+    let issues = 0;
+    for (const [issueKey, values] of Object.entries(store)) {
+      const filtered = values.filter(item => item.toLocaleLowerCase() !== label.toLocaleLowerCase());
+      if (filtered.length === values.length) continue;
+      issues += 1;
+      if (filtered.length) store[issueKey] = filtered;
+      else delete store[issueKey];
+    }
+    if (issues) this.write(store);
+    return {label, issues};
   }
 
   prune(issueKeys) {

@@ -1,3 +1,6 @@
+import {groupMarkdownBySprint} from './sprints.js';
+import {plainTaskText, writeRichClipboard} from './clipboard.js';
+
 const $ = selector => document.querySelector(selector);
 const escapeHtml = value => value.replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
 const slugCounts = new Map();
@@ -5,6 +8,10 @@ let selectedIssueKey = null;
 let commentCounts = {};
 let commentsByIssue = {};
 let taskLabelsByIssue = {};
+let labelCatalog = [];
+let sourceDocument = '';
+let sourceConfig = null;
+let viewerMode = 'document';
 
 function slug(value) {
   const base = value.toLowerCase().replace(/<[^>]+>/g, '').replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-|-$/g, '') || 'section';
@@ -55,7 +62,8 @@ function parseMarkdown(markdown) {
       headings.push({level, text: plainText, id});
       const collapsible = level >= 2 && level <= 5;
       const commentAction = issueKey ? `<button class="comment-trigger" data-issue-key="${issueKey}" aria-label="Открыть комментарии к ${issueKey}" title="Локальные комментарии"><span>💬</span><b hidden>0</b></button>` : '';
-      html.push(`<h${level} id="${id}" data-level="${level}"${issueKey ? ` data-issue-key="${issueKey}"` : ''}>${collapsible ? '<button class="fold" aria-label="Свернуть раздел">⌄</button>' : ''}<span>${inline(heading[2])}</span>${commentAction}</h${level}>`);
+      const copyAction = issueKey ? `<button class="copy-trigger" data-issue-key="${issueKey}" aria-label="Копировать ${issueKey}" title="Копировать задачу с Jira-ссылкой"><span>⧉</span></button>` : '';
+      html.push(`<h${level} id="${id}" data-level="${level}"${issueKey ? ` data-issue-key="${issueKey}"` : ''}>${collapsible ? '<button class="fold" aria-label="Свернуть раздел">⌄</button>' : ''}<span>${inline(heading[2])}</span>${copyAction}${commentAction}</h${level}>`);
       continue;
     }
     const item = /^\s*([-*]|\d+\.)\s+(.+)$/.exec(line);
@@ -144,8 +152,43 @@ function wireViewer(headings) {
     event.stopPropagation();
     openComments(button.dataset.issueKey);
   }));
+  document.querySelectorAll('.copy-trigger').forEach(button => button.addEventListener('click', event => {
+    event.preventDefault();
+    event.stopPropagation();
+    copyTask(button.closest('h5'), button);
+  }));
   renderTaskLabels();
   refreshCommentBadges();
+}
+
+async function copyTask(heading, button) {
+  const title = heading.querySelector(':scope > span')?.textContent.trim() || heading.textContent.trim();
+  const url = heading.querySelector(':scope > span a')?.href || '';
+  const content = nodesInSection(heading).filter(node => !node.classList.contains('inline-comments'));
+  const container = document.createElement('div');
+  const titleElement = document.createElement('p');
+  titleElement.innerHTML = `<strong>${heading.querySelector(':scope > span')?.innerHTML || escapeHtml(title)}</strong>`;
+  container.append(titleElement, ...content.map(node => {
+    const clone = node.cloneNode(true);
+    clone.hidden = false;
+    clone.classList.remove('search-hidden');
+    clone.querySelectorAll('button,.task-labels').forEach(item => item.remove());
+    return clone;
+  }));
+  const bodyText = content.map(node => node.textContent.trim()).filter(Boolean).join('\n');
+  try {
+    await writeRichClipboard(container.innerHTML, plainTaskText(title, url, bodyText));
+    button.classList.add('copied');
+    button.querySelector('span').textContent = '✓';
+    button.title = 'Скопировано';
+    setTimeout(() => {
+      button.classList.remove('copied');
+      button.querySelector('span').textContent = '⧉';
+      button.title = 'Копировать задачу с Jira-ссылкой';
+    }, 1600);
+  } catch (error) {
+    button.title = `Не удалось скопировать: ${error.message}`;
+  }
 }
 
 function renderTaskLabels() {
@@ -164,7 +207,48 @@ function renderTaskLabels() {
 async function loadAllLabels() {
   const result = await fetch('/api/labels').then(response => response.json());
   taskLabelsByIssue = result.labels || {};
+  labelCatalog = result.catalog || buildLabelCatalog(taskLabelsByIssue);
   renderTaskLabels();
+  renderLabelCatalog();
+}
+
+function buildLabelCatalog(labelsByIssue) {
+  const counts = new Map();
+  Object.values(labelsByIssue).flat().forEach(label => counts.set(label, (counts.get(label) || 0) + 1));
+  return [...counts].map(([name, issues]) => ({name, issues})).sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+}
+
+function renderLabelCatalog() {
+  $('#label-options').innerHTML = labelCatalog.map(item => `<option value="${escapeHtml(item.name)}"></option>`).join('');
+  $('#label-catalog-count').textContent = labelCatalog.length;
+  $('#label-catalog-list').innerHTML = labelCatalog.length ? labelCatalog.map(item => `<div class="catalog-label"><button class="catalog-select" data-label="${escapeHtml(item.name)}"><span>${escapeHtml(item.name)}</span><small>${item.issues}</small></button><button class="catalog-delete" data-label="${escapeHtml(item.name)}" aria-label="Удалить метку ${escapeHtml(item.name)} из системы">Удалить</button></div>`).join('') : '<span class="labels-empty">Каталог пока пуст</span>';
+  document.querySelectorAll('.catalog-select').forEach(button => button.addEventListener('click', () => addExistingLabel(button.dataset.label)));
+  document.querySelectorAll('.catalog-delete').forEach(button => button.addEventListener('click', () => deleteCatalogLabel(button.dataset.label)));
+}
+
+function addExistingLabel(label) {
+  if (!selectedIssueKey) return;
+  const current = taskLabelsByIssue[selectedIssueKey] || [];
+  if (current.some(item => item.toLocaleLowerCase() === label.toLocaleLowerCase())) {
+    $('#label-message').textContent = 'Эта метка уже назначена задаче';
+    return;
+  }
+  saveLabels([...current, label]);
+}
+
+async function deleteCatalogLabel(label) {
+  const usage = labelCatalog.find(item => item.name === label)?.issues || 0;
+  if (!confirm(`Удалить метку «${label}» у ${usage} задач?`)) return;
+  $('#label-message').textContent = 'Удаление метки и перегруппировка…';
+  const response = await fetch(`/api/label-catalog/${encodeURIComponent(label)}`, {method: 'DELETE'});
+  const result = await response.json();
+  if (!response.ok) { $('#label-message').textContent = result.error; return; }
+  taskLabelsByIssue = result.labels || {};
+  labelCatalog = result.catalog || [];
+  $('#label-message').textContent = `Метка «${label}» удалена у ${result.removed.issues} задач`;
+  renderLabelEditor();
+  renderLabelCatalog();
+  await load();
 }
 
 function refreshCommentBadges() {
@@ -214,14 +298,7 @@ async function openComments(issueKey) {
 
 function renderLabelEditor() {
   const labels = taskLabelsByIssue[selectedIssueKey] || [];
-  $('#task-labels-editor').innerHTML = labels.length ? labels.map((label, index) => `<span class="editable-label${index === 0 ? ' primary-label' : ''}"><button class="promote-label" data-label-index="${index}" title="${index === 0 ? 'Используется для группировки' : 'Сделать группирующей'}">${escapeHtml(label)}</button><button class="remove-label" data-label-index="${index}" aria-label="Удалить метку ${escapeHtml(label)}">×</button></span>`).join('') : '<span class="labels-empty">Метки не назначены — используется theme</span>';
-  document.querySelectorAll('.promote-label').forEach(button => button.addEventListener('click', () => {
-    const index = Number(button.dataset.labelIndex);
-    if (index === 0) return;
-    const next = [...labels];
-    next.unshift(next.splice(index, 1)[0]);
-    saveLabels(next);
-  }));
+  $('#task-labels-editor').innerHTML = labels.length ? labels.map((label, index) => `<span class="editable-label"><span>${escapeHtml(label)}</span><button class="remove-label" data-label-index="${index}" aria-label="Снять метку ${escapeHtml(label)} с задачи">×</button></span>`).join('') : '<span class="labels-empty">Метки не назначены — используется theme</span>';
   document.querySelectorAll('.remove-label').forEach(button => button.addEventListener('click', () => {
     saveLabels(labels.filter((_, index) => index !== Number(button.dataset.labelIndex)));
   }));
@@ -235,8 +312,10 @@ async function saveLabels(labels) {
   const result = await response.json();
   if (!response.ok) { $('#label-message').textContent = result.error; return; }
   taskLabelsByIssue[issueKey] = result.labels;
+  labelCatalog = buildLabelCatalog(taskLabelsByIssue);
   $('#label-message').textContent = result.sync?.lastError ? `Метки сохранены, ошибка перегруппировки: ${result.sync.lastError}` : 'Метки сохранены, документ перегруппирован';
   renderLabelEditor();
+  renderLabelCatalog();
   await load();
 }
 
@@ -278,13 +357,21 @@ async function load() {
     fetch('/api/config').then(response => response.json()),
     fetch('/api/status').then(response => response.json())
   ]);
-  const parsed = parseMarkdown(doc);
-  $('#markdown').innerHTML = parsed.html;
+  sourceDocument = doc;
+  sourceConfig = cfg;
   $('#editor').value = JSON.stringify(cfg, null, 2);
-  $('#document-meta').textContent = `${doc.split('\n').length.toLocaleString()} строк · ${parsed.headings.length} разделов`;
-  wireViewer(parsed.headings);
+  renderViewer();
   await Promise.all([loadAllComments(), loadAllLabels()]);
   showStatus(status);
+}
+
+function renderViewer() {
+  const markdown = viewerMode === 'sprints' ? groupMarkdownBySprint(sourceDocument, sourceConfig) : sourceDocument;
+  const parsed = parseMarkdown(markdown);
+  $('#markdown').innerHTML = parsed.html;
+  $('#document-meta').textContent = `${viewerMode === 'sprints' ? 'По спринтам' : 'Документ'} · ${markdown.split('\n').length.toLocaleString()} строк · ${parsed.headings.length} разделов`;
+  $('#search').value = '';
+  wireViewer(parsed.headings);
 }
 
 function showStatus(state) {
@@ -317,6 +404,10 @@ async function loadLogs() {
 document.querySelectorAll('.tab').forEach(button => button.addEventListener('click', () => {
   document.querySelectorAll('.tab,.view').forEach(node => node.classList.remove('active'));
   button.classList.add('active'); $(`#${button.dataset.view}`).classList.add('active');
+  if (button.dataset.mode) {
+    viewerMode = button.dataset.mode;
+    if (sourceDocument && sourceConfig) renderViewer();
+  }
   if (button.dataset.view === 'logs') loadLogs();
 }));
 $('#sync').addEventListener('click', async () => { showStatus({running:true}); const state = await fetch('/api/sync',{method:'POST'}).then(r=>r.json()); showStatus(state); await load(); });

@@ -13,7 +13,7 @@
     <div class="brand"><span class="brand-mark">TW</span><div><strong>TeamWork</strong><small>Jira via Docker MCP Gateway</small></div></div>
     <div class="actions"><span id="status" class="status">Проверка…</span><button id="sync" class="primary">Обновить сейчас</button></div>
   </header>
-  <nav class="tabs"><button class="tab active" data-view="document">Документ</button><button class="tab" data-view="logs">Журнал</button><button class="tab" data-view="config">Конфигурация</button></nav>
+  <nav class="tabs"><button class="tab active" data-view="document" data-mode="document">Документ</button><button class="tab" data-view="document" data-mode="sprints">Спринты</button><button class="tab" data-view="logs">Журнал</button><button class="tab" data-view="config">Конфигурация</button></nav>
   <div id="error-banner" class="error-banner" hidden><div><strong id="error-title">Ошибка синхронизации</strong><p id="error-detail"></p></div><button id="dismiss-error" class="quiet">Скрыть</button></div>
   <main>
     <section id="document" class="view active document-view">
@@ -32,10 +32,11 @@
       <aside id="comments-panel" class="comments-panel" aria-label="Комментарии к задаче" hidden>
         <div class="comments-head"><div><span>Задача</span><strong id="comments-task"></strong></div><button id="close-comments" class="icon-button" aria-label="Закрыть панель задачи">×</button></div>
         <section class="labels-editor">
-          <div class="labels-title"><strong>Метки</strong><span>Первая перекрывает theme</span></div>
+          <div class="labels-title"><strong>Метки</strong><span>Перекрывают theme</span></div>
           <div id="task-labels-editor" class="task-labels-editor"></div>
-          <form id="label-form" class="label-form"><input id="label-input" maxlength="40" placeholder="Новая метка" autocomplete="off"><button class="quiet" type="submit">Добавить</button></form>
+          <form id="label-form" class="label-form"><input id="label-input" list="label-options" maxlength="40" placeholder="Выбрать или создать метку" autocomplete="off"><datalist id="label-options"></datalist><button class="quiet" type="submit">Добавить</button></form>
           <p id="label-message" role="status"></p>
+          <details class="label-catalog"><summary>Все метки <b id="label-catalog-count">0</b></summary><div id="label-catalog-list" class="label-catalog-list"></div></details>
         </section>
         <div class="comments-section-title">Локальные комментарии</div>
         <div id="comments-list" class="comments-list"></div>

@@ -7,12 +7,15 @@ TeamWork periodically retrieves Jira issues through an authenticated Docker MCP 
 ## Features
 
 - Docker MCP Gateway integration; Jira credentials and OAuth tokens are not stored in project configuration.
-- Configurable grouping: Goal → theme → active sprint → future sprint → backlog.
+- Configurable grouping: Goal → local label or weighted workstream → active sprint → future sprint → backlog.
 - Periodic and manual synchronization.
 - Markdown viewer with document outline, search, scroll tracking, and nested folding.
+- Separate Sprints tab that reverses the hierarchy to placement → Goal → workstream while preserving active, future, backlog order.
 - Configurable issue-type icons and task status in headings.
+- One-click rich-text task copying with a preserved Jira hyperlink for Confluence, OneNote, and plain-text fallbacks.
 - Local task comments displayed below task headings and managed from a side panel.
-- Local task labels with inline chips, priority management, and label-first grouping.
+- Local task labels with inline chips and label-first multi-grouping.
+- Reusable local-label catalog with existing-label selection, per-task removal, usage counts, and confirmed global deletion.
 - Independent comment storage with automatic cleanup when an issue disappears.
 - Structured JSONL application logs and an in-app log viewer.
 - Containerized runtime with no third-party Node.js runtime dependencies.
@@ -71,7 +74,9 @@ Generated documents, local comments, logs, and process files live under `data/`.
 
 ### Task labels and grouping priority
 
-Open a task with its `💬` action or by clicking an existing label chip. Add up to ten local labels in the task panel. The first label is the grouping label; click another label to promote it. During synchronization, a task with a local label is grouped under `Label: <first label>` instead of a configured theme. Tasks without labels continue to use theme-pattern matching. Labels are stored in `data/labels.json`, are not sent to Jira, and are removed when their task disappears from the synchronized document.
+Open a task with its `💬` action or by clicking an existing label chip. Add up to ten local labels in the task panel by selecting an existing catalog entry or entering a new name. The `×` action removes a label only from the current task. The catalog shows usage counts and can delete a label from every task after confirmation. During synchronization, local labels completely override theme classification: the task is shown under every corresponding `Label: <label>` group. Tasks without local labels are classified using weighted matches in the title, Jira labels, components, and description. Configure their weights with `grouping.sourceWeights`; theme order is used only to resolve equal scores. Labels are stored in `data/labels.json`, are not sent to Jira, and are removed when their task disappears from the synchronized document.
+
+`Goal` is always the top-level group. Issues without a Jira Goal are retained under `Goal: <emptyGoalLabel>`. Placement is always ordered as active sprint, future sprint, then backlog.
 
 ## Development
 

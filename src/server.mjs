@@ -75,10 +75,19 @@ const server = http.createServer(async (req, res) => {
   }
   const commentPath = /^\/api\/comments\/([A-Z][A-Z0-9_]*-\d+)(?:\/([0-9a-f-]+))?$/.exec(url.pathname);
   const labelPath = /^\/api\/labels\/([A-Z][A-Z0-9_]*-\d+)$/.exec(url.pathname);
+  const catalogLabelPath = /^\/api\/label-catalog\/(.+)$/.exec(url.pathname);
   if (url.pathname === '/api/status') return json(res, 200, state);
   if (url.pathname === '/api/comments' && req.method === 'GET') return json(res, 200, {comments: comments.all()});
   if (url.pathname === '/api/comments/counts' && req.method === 'GET') return json(res, 200, {counts: comments.counts()});
-  if (url.pathname === '/api/labels' && req.method === 'GET') return json(res, 200, {labels: labels.all()});
+  if (url.pathname === '/api/labels' && req.method === 'GET') return json(res, 200, {labels: labels.all(), catalog: labels.catalog()});
+  if (catalogLabelPath && req.method === 'DELETE') {
+    try {
+      const removed = labels.removeEverywhere(decodeURIComponent(catalogLabelPath[1]));
+      logger.info('label.deleted', 'Локальная метка удалена из системы', removed);
+      const sync = removed.issues ? await syncNow() : state;
+      return json(res, 200, {removed, labels: labels.all(), catalog: labels.catalog(), sync});
+    } catch (error) { return json(res, 400, {error: error.message}); }
+  }
   if (labelPath && req.method === 'GET') return json(res, 200, {issueKey: labelPath[1], labels: labels.list(labelPath[1])});
   if (labelPath && req.method === 'PUT') {
     try {

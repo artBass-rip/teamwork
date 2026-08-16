@@ -2,6 +2,41 @@
 
 All notable changes are documented here. The format follows Keep a Changelog and Semantic Versioning.
 
+## [1.6.0] - 2026-08-16
+
+### Added
+
+- A copy action on every task heading that writes both rich HTML and plain text to the clipboard.
+- Preserved clickable Jira hyperlinks for Confluence and OneNote, with explicit URLs in plain-text destinations.
+- Visual success feedback, legacy clipboard fallback, and automated coverage for URL preservation.
+
+## [1.5.0] - 2026-08-15
+
+### Added
+
+- Existing-label suggestions and a reusable label catalog in the task panel.
+- Label usage counts and confirmed system-wide label deletion with automatic document regrouping.
+- Store-level tests for catalog generation and case-insensitive global deletion.
+
+## [1.4.0] - 2026-08-15
+
+### Added
+
+- A separate Sprints tab using the existing editor-style viewer, outline, search, folding, comments, and task labels.
+- Client-side hierarchy transformation from Goal → workstream → placement to placement → Goal → workstream without another Jira request.
+- Automated coverage for sprint ordering and hierarchy preservation.
+
+## [1.3.0] - 2026-07-29
+
+### Changed
+
+- Replaced first-regex theme selection with weighted classification across title, Jira labels, components, and description.
+- Introduced workstreams for runtime platform, developer platform, cloud/IaC, security, observability, data, networking, reliability, FinOps, research, and legacy work.
+- A task with local labels is now displayed in every matching label group; labels still override themes completely.
+- Kept Goal as the mandatory top-level group, including the configured empty-Goal group, and retained active/future/backlog placement order.
+- Goal counters now count unique issues when a task belongs to multiple label groups.
+- The macOS launcher now waits for the previous launchd Gateway job to exit before reusing its label and log.
+
 ## [1.2.0] - 2026-07-29
 
 ### Added

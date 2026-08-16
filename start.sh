@@ -26,6 +26,16 @@ gateway_mode=process
 if [ "$(uname -s)" = Darwin ] && command -v launchctl >/dev/null 2>&1; then
   gateway_mode=launchd
   launchctl remove "$launchd_label" >/dev/null 2>&1 || true
+  # launchctl removal is asynchronous. Reusing the label or truncating the log
+  # before the previous job exits can make submit fail and produce a sparse log.
+  for _ in $(seq 1 50); do
+    launchctl list "$launchd_label" >/dev/null 2>&1 || break
+    sleep 0.1
+  done
+  if launchctl list "$launchd_label" >/dev/null 2>&1; then
+    echo "Предыдущий Docker MCP Gateway не завершился." >&2
+    exit 1
+  fi
   umask 077
   printf '%s' "$MCP_GATEWAY_AUTH_TOKEN" >"$gateway_token_file"
   : >"$gateway_log_file"

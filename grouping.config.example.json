@@ -28,11 +28,19 @@
     "placementOrder": ["active", "future", "backlog"],
     "placementLabels": {"active": "Active sprint", "future": "Future sprint", "backlog": "Backlog"},
     "closedSprintIssuesGoToBacklog": true,
+    "sourceWeights": {"title": 8, "labels": 7, "components": 7, "description": 1},
     "themes": [
-      {"name": "Platform", "pattern": "\\b(kubernetes|cloud|terraform|network)\\b"},
-      {"name": "Delivery", "pattern": "\\b(ci|cd|pipeline|build|deploy)\\b"},
-      {"name": "Security", "pattern": "\\b(security|iam|secret|certificate|sso)\\b"},
-      {"name": "Observability", "pattern": "\\b(monitor|logging|metric|alert)\\b"}
+      {"name": "Data Platforms", "pattern": "\\b(kafka|mongo|postgres|rds|redis|opensearch|database)\\b"},
+      {"name": "Observability", "pattern": "\\b(monitoring|logging|logs?|metrics?|grafana|prometheus|alerts?)\\b"},
+      {"name": "Security, Identity and Secrets", "pattern": "\\b(iam|role|policy|vault|secret|security|certificate|sso|oauth)\\b"},
+      {"name": "Network, DNS and Edge", "pattern": "\\b(vpc|network|subnet|route ?53|dns|vpn|cloudflare)\\b"},
+      {"name": "Kubernetes and Runtime Platform", "pattern": "\\b(kubernetes|k8s|eks|helm|istio|ingress|rancher)\\b"},
+      {"name": "CI/CD and Developer Platform", "pattern": "\\b(gitlab|runner|ci/cd|pipeline|codebuild|build script|deploy script)\\b"},
+      {"name": "Cloud Infrastructure and IaC", "pattern": "\\b(terraform|terragrunt|iac|cdk|aws account|ami|ecr|s3|efs)\\b"},
+      {"name": "Reliability and Operations", "pattern": "\\b(backup|restore|recovery|cleanup|autoscaling|maintenance)\\b"},
+      {"name": "FinOps and Governance", "pattern": "\\b(cost|billing|budget|finops|tagging|governance)\\b"},
+      {"name": "Research and Technical Debt", "pattern": "\\b(poc|research|investigate|explore|technical debt|rnd)\\b"},
+      {"name": "Legacy and Decommission", "pattern": "\\b(legacy|decommission|destroy|old infra)\\b"}
     ],
     "fallbackTheme": "Other"
   }

@@ -11,15 +11,49 @@ function normalizeDescription(value) {
   return raw.replace(/^#{1,6}\s+(.+)$/gm, (_, title) => `###### ${title}`);
 }
 
-function themeFor(issue, config) {
-  const source = `${issue.title} ${issue.description} ${issue.labels.join(' ')} ${issue.components.join(' ')}`;
-  return config.grouping.themes.find(theme => new RegExp(theme.pattern, 'i').test(source))?.name
-    || config.grouping.fallbackTheme;
+function matchCount(pattern, value) {
+  if (!value) return 0;
+  const expression = new RegExp(pattern, 'gi');
+  let count = 0;
+  while (expression.exec(String(value)) && count < 2) {
+    count += 1;
+    if (expression.lastIndex === 0) expression.lastIndex += 1;
+  }
+  return count;
+}
+
+export function themeFor(issue, config) {
+  const weights = config.grouping.sourceWeights || {title: 8, labels: 7, components: 7, description: 1};
+  const sources = {
+    title: issue.title || '',
+    labels: (issue.labels || []).join(' '),
+    components: (issue.components || []).join(' '),
+    description: issue.description || ''
+  };
+  let winner;
+  let bestScore = 0;
+  for (const theme of config.grouping.themes) {
+    const score = Object.entries(sources).reduce(
+      (total, [source, value]) => total + matchCount(theme.pattern, value) * (weights[source] ?? 0),
+      0
+    );
+    if (score > bestScore) {
+      winner = theme.name;
+      bestScore = score;
+    }
+  }
+  return winner || config.grouping.fallbackTheme;
 }
 
 export function groupFor(issue, config, labelsByIssue = {}) {
   const label = labelsByIssue[issue.key]?.[0];
   return label ? `${config.grouping.labelGroupPrefix || 'Метка'}: ${label}` : themeFor(issue, config);
+}
+
+export function groupsFor(issue, config, labelsByIssue = {}) {
+  const labels = labelsByIssue[issue.key] || [];
+  if (labels.length) return labels.map(label => `${config.grouping.labelGroupPrefix || 'Метка'}: ${label}`);
+  return [themeFor(issue, config)];
 }
 
 function placementFor(issue, config) {
@@ -34,12 +68,13 @@ function buildTree(issues, config, labelsByIssue) {
   const tree = new Map();
   for (const issue of issues) {
     const goal = issue.goal || config.grouping.emptyGoalLabel;
-    const theme = groupFor(issue, config, labelsByIssue);
     const placement = placementFor(issue, config);
     if (!tree.has(goal)) tree.set(goal, new Map());
-    if (!tree.get(goal).has(theme)) tree.get(goal).set(theme, new Map());
-    if (!tree.get(goal).get(theme).has(placement.key)) tree.get(goal).get(theme).set(placement.key, {label: placement.label, issues: []});
-    tree.get(goal).get(theme).get(placement.key).issues.push(issue);
+    for (const theme of groupsFor(issue, config, labelsByIssue)) {
+      if (!tree.get(goal).has(theme)) tree.get(goal).set(theme, new Map());
+      if (!tree.get(goal).get(theme).has(placement.key)) tree.get(goal).get(theme).set(placement.key, {label: placement.label, issues: []});
+      tree.get(goal).get(theme).get(placement.key).issues.push(issue);
+    }
   }
   return tree;
 }
@@ -50,10 +85,9 @@ function render(issues, config, labelsByIssue) {
   let md = `# ${config.document.title}\n\n`;
   md += `Дата актуализации: ${new Date().toISOString()}  \nИсточник: Jira через Docker MCP Gateway  \nВсего задач: **${issues.length}**\n\n`;
   for (const [goal, themes] of [...tree].sort(([a], [b]) => a.localeCompare(b, 'ru'))) {
-    const goalCount = [...themes.values()].reduce(
-      (total, placements) => total + [...placements.values()].reduce((count, group) => count + group.issues.length, 0),
-      0
-    );
+    const goalCount = new Set(
+      [...themes.values()].flatMap(placements => [...placements.values()].flatMap(group => group.issues.map(issue => issue.key)))
+    ).size;
     md += `## Goal: ${goal} (${goalCount})\n\n`;
     for (const [theme, placements] of [...themes].sort(([a], [b]) => a.localeCompare(b, 'ru'))) {
       const themeCount = [...placements.values()].reduce((n, x) => n + x.issues.length, 0);
