@@ -18,7 +18,11 @@ jobs:
         with:
           node-version: 22
           cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            mcp/package-lock.json
       - run: npm ci
+      - run: npm --prefix mcp ci
       - run: npm run check
       - run: npm audit --audit-level=high
-
+      - run: npm --prefix mcp audit --audit-level=high

@@ -5,6 +5,18 @@ import {resolveInside} from './security.mjs';
 
 const textOf = result => result.content?.find(item => item.type === 'text')?.text;
 
+export const DEFAULT_GROUPING = {
+  labelGroupPrefix: 'Метка',
+  sourceWeights: {title: 8, labels: 7, components: 7, description: 1},
+  themes: [], fallbackTheme: 'Прочее'
+};
+const SPRINT_PLACEMENT = {order: ['active', 'future', 'backlog'], labels: {active: 'Активный спринт', future: 'Будущий спринт', backlog: 'Бэклог'}};
+
+const DOCUMENT_DEFAULTS = {
+  includeSummary: true, includeDescription: true, includeAssignee: true, includeStatus: true, includeIssueType: true, includeParent: true,
+  issueTypeIcons: {Epic: '⚡', Task: '☑', Story: '📖', Bug: '🐞', 'Sub-task': '◻', Goal: '◆', 'Эпик': '⚡', 'Задача': '☑', 'История': '📖', 'Ошибка': '🐞', 'Подзадача': '◻'}, fallbackIssueTypeIcon: '•'
+};
+
 function normalizeDescription(value) {
   const raw = typeof value === 'string' ? value : JSON.stringify(value ?? '', null, 2);
   if (!raw.trim()) return '_Описание отсутствует._';
@@ -33,6 +45,7 @@ export function themeFor(issue, config) {
   let winner;
   let bestScore = 0;
   for (const theme of config.grouping.themes) {
+    if (theme.issueKeys?.includes(issue.key)) return theme.name;
     const score = Object.entries(sources).reduce(
       (total, [source, value]) => total + matchCount(theme.pattern, value) * (weights[source] ?? 0),
       0
@@ -58,81 +71,124 @@ export function groupsFor(issue, config, labelsByIssue = {}) {
 
 function placementFor(issue, config) {
   const active = issue.sprints.find(s => s.state === 'active');
-  if (active) return {key: 'active', label: `${config.grouping.placementLabels.active} — ${active.name}`};
+  if (active) return {key: 'active', label: `${SPRINT_PLACEMENT.labels.active} — ${active.name}`};
   const future = issue.sprints.find(s => s.state === 'future');
-  if (future) return {key: 'future', label: `${config.grouping.placementLabels.future} — ${future.name}`};
-  return {key: 'backlog', label: config.grouping.placementLabels.backlog};
+  if (future) return {key: 'future', label: `${SPRINT_PLACEMENT.labels.future} — ${future.name}`};
+  return {key: 'backlog', label: SPRINT_PLACEMENT.labels.backlog};
 }
 
-function buildTree(issues, config, labelsByIssue) {
-  const tree = new Map();
+function taskMarkdown(issue, config, labelsByIssue, level = 3) {
+  const jiraBaseUrl = String(config.jira.baseUrl || '').replace(/\/$/, '');
+  const icon = config.document.issueTypeIcons?.[issue.type] || config.document.fallbackIssueTypeIcon || '•';
+  const title = jiraBaseUrl ? `[${issue.key}](${jiraBaseUrl}/browse/${issue.key})` : issue.key;
+  let md = `${'#'.repeat(level)} ${icon} ${title} — ${issue.title} — ${issue.status}\n\n`;
+  if (config.document.includeAssignee) md += `- Исполнитель: ${issue.assignee}\n`;
+  if (config.document.includeStatus) md += `- Статус: ${issue.status}\n`;
+  if (config.document.includeIssueType) md += `- Тип: ${issue.type}\n`;
+  if (labelsByIssue[issue.key]?.length) md += `- Метки TeamWork: ${labelsByIssue[issue.key].join(', ')}\n`;
+  if (config.document.includeParent && issue.parent) md += `- Родительская задача: ${jiraBaseUrl ? `[${issue.parent}](${jiraBaseUrl}/browse/${issue.parent})` : issue.parent}\n`;
+  if (config.document.includeDescription) md += `\n**Описание**\n\n${normalizeDescription(issue.description)}\n\n`;
+  return md;
+}
+
+function preamble(config, issues, suffix) { return `# ${config.document.title} — ${suffix}\n\nДата актуализации: ${new Date().toISOString()}  \nИсточник: Jira через встроенный TeamWork MCP  \nВсего задач: **${issues.length}**\n\n`; }
+
+export function renderBacklog(issues, config, labelsByIssue = {}) {
+  let md = preamble(config, issues, 'Backlog');
+  const grouped = new Map(); const flat = [];
   for (const issue of issues) {
-    const goal = issue.goal || config.grouping.emptyGoalLabel;
-    const placement = placementFor(issue, config);
-    if (!tree.has(goal)) tree.set(goal, new Map());
-    for (const theme of groupsFor(issue, config, labelsByIssue)) {
-      if (!tree.get(goal).has(theme)) tree.get(goal).set(theme, new Map());
-      if (!tree.get(goal).get(theme).has(placement.key)) tree.get(goal).get(theme).set(placement.key, {label: placement.label, issues: []});
-      tree.get(goal).get(theme).get(placement.key).issues.push(issue);
+    const explicit = labelsByIssue[issue.key]?.length || config.grouping.themes.length;
+    if (!explicit) { flat.push(issue); continue; }
+    for (const group of groupsFor(issue, config, labelsByIssue)) {
+      if (!grouped.has(group)) grouped.set(group, []);
+      grouped.get(group).push(issue);
     }
   }
-  return tree;
-}
-
-function render(issues, config, labelsByIssue) {
-  const tree = buildTree(issues, config, labelsByIssue);
-  const jiraBaseUrl = String(config.jira.baseUrl || '').replace(/\/$/, '');
-  let md = `# ${config.document.title}\n\n`;
-  md += `Дата актуализации: ${new Date().toISOString()}  \nИсточник: Jira через Docker MCP Gateway  \nВсего задач: **${issues.length}**\n\n`;
-  for (const [goal, themes] of [...tree].sort(([a], [b]) => a.localeCompare(b, 'ru'))) {
-    const goalCount = new Set(
-      [...themes.values()].flatMap(placements => [...placements.values()].flatMap(group => group.issues.map(issue => issue.key)))
-    ).size;
-    md += `## Goal: ${goal} (${goalCount})\n\n`;
-    for (const [theme, placements] of [...themes].sort(([a], [b]) => a.localeCompare(b, 'ru'))) {
-      const themeCount = [...placements.values()].reduce((n, x) => n + x.issues.length, 0);
-      md += `### ${theme} (${themeCount})\n\n`;
-      for (const key of config.grouping.placementOrder) {
-        const group = placements.get(key);
-        if (!group) continue;
-        md += `#### ${group.label} (${group.issues.length})\n\n`;
-        for (const issue of group.issues.sort((a, b) => a.key.localeCompare(b.key, undefined, {numeric: true}))) {
-          const typeIcon = config.document.issueTypeIcons?.[issue.type] || config.document.fallbackIssueTypeIcon || '•';
-          md += `##### ${typeIcon} [${issue.key}](${jiraBaseUrl}/browse/${issue.key}) — ${issue.title} — ${issue.status}\n\n`;
-          if (config.document.includeAssignee) md += `- Исполнитель: ${issue.assignee}\n`;
-          if (config.document.includeStatus) md += `- Статус: ${issue.status}\n`;
-          if (config.document.includeIssueType) md += `- Тип: ${issue.type}\n`;
-          if (labelsByIssue[issue.key]?.length) md += `- Метки TeamWork: ${labelsByIssue[issue.key].join(', ')}\n`;
-          if (config.document.includeParent && issue.parent) md += `- Родительская задача: [${issue.parent}](${jiraBaseUrl}/browse/${issue.parent})\n`;
-          if (config.document.includeDescription) md += `\n**Описание**\n\n${normalizeDescription(issue.description)}\n\n`;
-        }
-      }
-    }
+  if (flat.length) { md += `## Задачи (${flat.length})\n\n`; for (const issue of flat.sort(issueOrder)) md += taskMarkdown(issue, config, labelsByIssue); }
+  for (const [group, tasks] of [...grouped].sort(([a],[b]) => a.localeCompare(b, 'ru'))) {
+    md += `## ${group} (${tasks.length})\n\n`;
+    for (const issue of tasks.sort(issueOrder)) md += taskMarkdown(issue, config, labelsByIssue);
   }
   return md;
 }
 
-export async function synchronize(configPath, mcpUrl, mcpAuthToken = '', dataDir = 'data', labelsByIssue = {}, log = () => {}) {
+export function renderSprints(issues, config, labelsByIssue = {}) {
+  let md = preamble(config, issues, 'Sprints'); const placements = new Map();
+  for (const issue of issues) { const place = placementFor(issue, config); if (!placements.has(place.key)) placements.set(place.key, new Map()); const named = placements.get(place.key); if (!named.has(place.label)) named.set(place.label, []); named.get(place.label).push(issue); }
+  for (const key of SPRINT_PLACEMENT.order) for (const [placement, tasks] of placements.get(key) || []) { md += `## ${placement} (${tasks.length})\n\n`; for (const issue of tasks.sort(issueOrder)) md += taskMarkdown(issue, config, labelsByIssue); }
+  return md;
+}
+const issueOrder = (a,b) => a.key.localeCompare(b.key, undefined, {numeric:true});
+
+export async function synchronize(configPath, mcpUrl, mcpAuthToken = '', dataDir = 'data', labelsByIssue = {}, log = () => {}, workspace = {}) {
   const config = JSON.parse(readFileSync(configPath, 'utf8'));
+  validateSyncConfig(config);
+  config.jira ||= {};
+  config.jira.baseUrl = workspace.jiraBaseUrl || config.jira.baseUrl || '';
+  config.jira.cloudId = workspace.cloudId || config.jira.cloudId || '';
   log('sync.config_loaded', 'Конфигурация синхронизации загружена', {project: config.jira.projectKey});
   const mcp = new McpClient(mcpUrl, mcpAuthToken);
-  log('sync.mcp_initialize', 'Инициализация MCP-клиента', {mcpUrl});
+  log('sync.mcp_initialize', 'Инициализация встроенного MCP-клиента', {mcpUrl});
   await mcp.initialize();
   log('sync.mcp_ready', 'MCP-клиент инициализирован');
-  await mcp.request('tools/call', {name: 'code-mode', arguments: {name: 'jira-do-sync', servers: ['atlassian-remote']}});
-  log('sync.tool_ready', 'Code-mode инструмент Atlassian подготовлен');
-  const remoteScript = `
-const sample=JSON.parse(getJiraIssue({cloudId:${JSON.stringify(config.jira.cloudId)},issueIdOrKey:'DO-2241',fields:['*all'],expand:'names',responseContentFormat:'markdown'}));
-const goalFields=Object.entries(sample.names||{}).filter(([,name])=>String(name).trim().toLowerCase()===${JSON.stringify(config.jira.goalFieldName.toLowerCase())}).map(([id])=>id);
-let token,all=[];do{const r=JSON.parse(searchJiraIssuesUsingJql({cloudId:${JSON.stringify(config.jira.cloudId)},jql:${JSON.stringify(config.jira.jql)},fields:['summary','description','assignee','status','issuetype','parent','labels','components',${JSON.stringify(config.jira.sprintFieldId)}].concat(goalFields),maxResults:100,nextPageToken:token,responseContentFormat:'markdown',searchResultMode:'issues'}));all=all.concat(r.issues);token=r.nextPageToken}while(token);
-return JSON.stringify(all.map(i=>({key:i.key,title:i.fields.summary||'',description:i.fields.description||'',assignee:i.fields.assignee?.displayName||'Не назначен',status:i.fields.status?.name||'',type:i.fields.issuetype?.name||'',parent:i.fields.parent?.key||'',labels:i.fields.labels||[],components:(i.fields.components||[]).map(c=>c.name),goal:(()=>{const v=goalFields.map(id=>i.fields[id]).find(x=>x!=null&&(!Array.isArray(x)||x.length));if(v==null)return '';if(Array.isArray(v))return v.map(x=>x?.value||x?.name||x?.displayName||String(x)).join(', ');if(typeof v==='object')return v.value||v.name||v.displayName||JSON.stringify(v);return String(v)})(),sprints:(i.fields[${JSON.stringify(config.jira.sprintFieldId)}]||[]).map(s=>({id:s.id,name:s.name,state:s.state}))})));`;
-  const result = await mcp.request('tools/call', {name: 'mcp-exec', arguments: {name: 'code-mode-jira-do-sync', arguments: {script: remoteScript}}});
-  const raw = JSON.parse(textOf(result));
-  const issues = Array.isArray(raw) ? raw : JSON.parse(textOf(raw));
-  log('sync.issues_received', 'Задачи Jira получены', {issues: issues.length});
-  const output = resolveInside(dataDir, config.document.outputPath);
-  mkdirSync(dirname(output), {recursive: true});
-  writeFileSync(output, render(issues, config, labelsByIssue));
-  log('sync.document_written', 'Markdown-документ сохранён', {issues: issues.length, output});
-  return {issues: issues.length, issueKeys: issues.map(issue => issue.key), output, updatedAt: new Date().toISOString()};
+  const projects = projectsForConfig({projects: workspace.projects});
+  const allIssues = [];
+  const documents = {};
+  for (const project of projects) {
+    config.grouping = groupingSettings(workspace.groupings?.[project.key]);
+    config.document = documentForProject(project);
+    const jql = jqlForProject(config.jira, project.key);
+    const result = await mcp.request('tools/call', {name: 'jira_export_snapshot', arguments: {cloudId: config.jira.cloudId, jql, goalFieldName: config.jira.goalFieldName, sprintFieldId: config.jira.sprintFieldId}});
+    const responseText = textOf(result);
+    if (result.isError) throw new Error(`${project.key}: ${responseText || 'Embedded Jira MCP tool failed'}`);
+    const raw = result.structuredContent || JSON.parse(responseText);
+    const issues = raw.issues || raw;
+    allIssues.push(...issues);
+    const backlogOutput = resolveInside(dataDir, `data/${project.key}-backlog.md`);
+    const sprintsOutput = resolveInside(dataDir, `data/${project.key}-sprints.md`);
+    const issuesOutput = resolveInside(dataDir, `data/${project.key}-issues.json`);
+    mkdirSync(dirname(backlogOutput), {recursive: true});
+    writeFileSync(backlogOutput, renderBacklog(issues, config, labelsByIssue));
+    writeFileSync(sprintsOutput, renderSprints(issues, config, labelsByIssue));
+    writeFileSync(issuesOutput, `${JSON.stringify(issues)}\n`);
+    documents[project.key] = {key: project.key, name: project.name, backlogOutput, sprintsOutput, issues: issues.length};
+    log('sync.project_written', 'Документы Jira-проекта сохранены', {project: project.key, issues: issues.length, backlogOutput, sprintsOutput});
+  }
+  log('sync.tool_ready', 'Snapshots выбранных Jira-проектов получены', {projects: projects.length});
+  return {issues: allIssues.length, issueKeys: allIssues.map(issue => issue.key), documents, output: Object.values(documents)[0]?.backlogOutput, updatedAt: new Date().toISOString()};
+}
+
+export function jqlForProject(jira, projectKey) {
+  if (typeof projectKey !== 'string' || !/^[A-Z][A-Z0-9_]*$/.test(projectKey)) throw new Error('Jira project key is missing or invalid');
+  const escapedKey = projectKey.replace(/"/g, '\\"');
+  const jql = jira.jqlTemplate
+    ? jira.jqlTemplate.replaceAll('{project}', escapedKey)
+    : jira.jql
+      ? String(jira.jql).replace(/project\s*=\s*(?:"[^"]+"|[A-Z][A-Z0-9_]*)/i, `project="${escapedKey}"`)
+      : `project="${escapedKey}" AND statusCategory!=Done ORDER BY created DESC`;
+  if (!jql.trim()) throw new Error(`JQL is not configured for project ${projectKey}`);
+  return jql;
+}
+
+export function projectsForConfig(jira = {}) {
+  const raw = jira.projects?.length ? jira.projects : jira.projectKey ? [{key: jira.projectKey, name: jira.projectKey}] : [];
+  const projects = raw.map(project => ({key: String(project?.key || '').trim().toUpperCase(), name: String(project?.name || project?.key || '').trim()})).filter(project => /^[A-Z][A-Z0-9_]*$/.test(project.key));
+  if (!projects.length) throw new Error('No valid Jira projects are selected. Open Projects and select at least one project.');
+  return [...new Map(projects.map(project => [project.key, project])).values()];
+}
+
+export function validateSyncConfig(config) {
+  if (!config?.schedule || !config?.logging) throw new Error('Configuration is incomplete: schedule and logging sections are required');
+  return config;
+}
+
+export function groupingSettings(value) {
+  const grouping = {...DEFAULT_GROUPING, ...(value || {}), sourceWeights: {...DEFAULT_GROUPING.sourceWeights, ...(value?.sourceWeights || {})}};
+  if (!Array.isArray(grouping.themes)) throw new Error('Grouping settings must contain a themes array');
+  for (const theme of grouping.themes) new RegExp(theme.pattern, 'i');
+  return grouping;
+}
+
+export function documentForProject(project) {
+  return {...DOCUMENT_DEFAULTS, title: `${project.name || project.key} — бэклог и созданные спринты`, outputPath: `data/${project.key}-jira-backlog-and-sprints.md`};
 }

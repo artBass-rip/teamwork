@@ -2,6 +2,35 @@
 
 All notable changes are documented here. The format follows Keep a Changelog and Semantic Versioning.
 
+## [1.8.0] - 2026-08-17
+
+### Added
+
+- Discovery of every Jira project available to the connected Atlassian user through the bundled MCP server.
+- A Projects workspace for selecting the projects polled and analyzed by scheduled synchronization.
+- An independent document tab for each selected project with Backlog and Sprints views.
+- A Russian/English interface switch in the application header with the preference stored in the browser.
+
+### Changed
+
+- Synchronization now creates one Markdown snapshot per selected project while retaining the legacy output for single-project installations.
+- The OAuth encryption key now lives beside the encrypted session in the private Docker volume, preventing key drift across project moves and container recreation; unreadable legacy sessions are quarantined instead of crashing the MCP healthcheck.
+- Selected projects and the optional Jira base URL moved out of grouping configuration into `data/workspace.json`; UI values are authoritative and the Integration tab can update the Jira address.
+- `document` and `grouping` are no longer required configuration sections: document metadata is derived per project, while grouping defaults are edited and persisted through the Configuration workspace.
+- Backlog is now sprint-free and flat without explicit rules; project groupings are isolated, Sprints uses its own generated document, and an append-only analyzer can add candidate themes from synchronized issue metadata.
+- Analyzer-owned themes are now reevaluated on every run: manual themes remain intact, while rules marked `source: "analyzer"` are rebuilt from the current project snapshot.
+- The keyword analyzer was replaced with semantic LLM classification. Ollama is the default provider; an encrypted OpenAI-compatible external connection and an explicit provider switch are available under Integration.
+
+## [1.7.0] - 2026-08-16
+
+### Added
+
+- A bundled, read-only Jira MCP sidecar built on the official MCP SDK.
+- Browser-only Atlassian OAuth 2.1 through the official Rovo MCP, using PKCE and dynamic client registration without Client ID or Client Secret input.
+- AES-256-GCM token storage in a private Docker volume with a launcher-generated encryption key.
+- The bundled Jira MCP is now the sole provider; legacy Docker MCP Gateway startup and code-mode execution were removed.
+- Container authentication, origin validation, rate-limit retries, health checks, tests, and dependency auditing for the new service.
+
 ## [1.6.0] - 2026-08-16
 
 ### Added

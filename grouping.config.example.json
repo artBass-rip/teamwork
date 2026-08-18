@@ -2,10 +2,8 @@
   "schedule": {"intervalMinutes": 60, "runOnStart": true},
   "logging": {"level": "info", "maxEntries": 500, "maxFileSizeMb": 5, "keepFiles": 3},
   "jira": {
-    "baseUrl": "https://your-company.atlassian.net",
     "cloudId": "YOUR_ATLASSIAN_CLOUD_ID",
-    "projectKey": "DEMO",
-    "jql": "project=\"DEMO\" AND statusCategory!=Done ORDER BY created DESC",
+    "jqlTemplate": "project=\"{project}\" AND statusCategory!=Done ORDER BY created DESC",
     "goalFieldName": "Goal",
     "sprintFieldId": "customfield_10020"
   },

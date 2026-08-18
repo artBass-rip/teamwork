@@ -2,11 +2,14 @@
 
 > **AI disclosure:** this project was created with the assistance of **OpenAI Codex (GPT-5)**. The maintainer reviewed and accepted the resulting implementation and documentation.
 
-TeamWork periodically retrieves Jira issues through an authenticated Docker MCP Gateway, groups them into a navigable hierarchy, generates Markdown, and serves an editor-style web viewer.
+TeamWork periodically retrieves Jira issues through its bundled read-only MCP server, groups them into a navigable hierarchy, generates Markdown, and serves an editor-style web viewer.
 
 ## Features
 
-- Docker MCP Gateway integration; Jira credentials and OAuth tokens are not stored in project configuration.
+- Bundled read-only Jira MCP sidecar based on the official MCP SDK.
+- Browser-based Atlassian OAuth 2.1 through the official Atlassian Rovo MCP, with encrypted token storage.
+- Multi-project discovery and selection, with scheduled polling and a separate generated document for every selected Jira project.
+- Per-project workspace tabs with Backlog and Sprints views, plus a persistent Russian/English interface switch.
 - Configurable grouping: Goal → local label or weighted workstream → active sprint → future sprint → backlog.
 - Periodic and manual synchronization.
 - Markdown viewer with document outline, search, scroll tracking, and nested folding.
@@ -22,9 +25,8 @@ TeamWork periodically retrieves Jira issues through an authenticated Docker MCP 
 
 ## Requirements
 
-- macOS or another Docker Desktop environment with Docker MCP Toolkit enabled.
-- Docker Desktop 4.62 or newer is recommended.
-- A Docker MCP profile containing an authenticated Atlassian server.
+- Docker with Compose; Docker Desktop 4.62 or newer is recommended.
+- An Atlassian account with access to the Atlassian Rovo MCP service.
 - Node.js 22+ only for local validation outside Docker.
 
 ## Configuration
@@ -35,25 +37,23 @@ Create the private runtime configuration:
 cp grouping.config.example.json grouping.config.json
 ```
 
-Set the Atlassian cloud ID, project key, JQL, sprint field, grouping patterns, output path, and synchronization interval. `grouping.config.json` is ignored by Git because it may contain organization-specific identifiers.
+Only scheduling and logging are required in `grouping.config.json`. Project keys and the Jira base URL do not belong in this configuration. Select polled projects from **Projects** and set the optional Jira address under **Integration**. Document names and output paths are derived per selected project. Grouping rules are independent per project and stored under `groupings.<PROJECT_KEY>` in `data/workspace.json`; no Backlog grouping is enabled by default.
 
-The Docker MCP profile defaults to `ecom_2_0`. Override it without editing the project:
+### Jira MCP authorization
 
-```bash
-MCP_PROFILE=my_profile ./start.sh
-```
-
-The launcher creates an ephemeral Gateway bearer token and passes it only through process/container environment variables. On macOS, `launchd` owns the long-running Gateway so closing the terminal does not stop synchronization. A mode-`0600` handoff file is deleted immediately after the Gateway reads it. Atlassian OAuth remains managed by Docker Desktop.
-
-On non-macOS systems, supervisor-style execution is available:
+Start TeamWork:
 
 ```bash
-MCP_GATEWAY_FOREGROUND=1 ./start.sh
+./start.sh
 ```
+
+Open the **Integration** tab and select **Connect Atlassian**. TeamWork opens the official Atlassian consent screen and completes OAuth 2.1 using PKCE and dynamic client registration. No Client ID, Client Secret, developer-console app, or API token is required. The encrypted OAuth session and its encryption key are retained together in a private Docker volume, so restarts, rebuilds, project moves, and normal container recreation do not require another sign-in. The local sidecar exposes only TeamWork's read operations and is not published on a host port; its official Atlassian Rovo MCP upstream is requested with read-only Jira scopes.
+
+Available MCP tools are `jira_list_sites`, `jira_list_projects`, `jira_export_snapshot`, `jira_search_issues`, and `jira_get_issue`. The built-in server is the only supported MCP provider. The site cloud ID is discovered from the connected Atlassian account and retained as internal workspace state.
 
 Open <http://localhost:8080> after startup.
 
-Always use `./start.sh` to create or recreate the application container. Direct `docker compose up` is intentionally rejected because it cannot provide the ephemeral MCP Gateway token and would leave the application returning `401 Unauthorized`. Runtime inspection remains available through the web UI and Docker Desktop.
+Always use `./start.sh` to create or recreate the application containers. Direct `docker compose up` is intentionally rejected because it cannot provide the ephemeral internal MCP token and encryption key.
 
 ### Network access and authentication
 
@@ -71,6 +71,12 @@ Do not expose the service publicly without HTTPS in front of it. The password is
 ## Runtime data
 
 Generated documents, local comments, logs, and process files live under `data/`. They are intentionally excluded from version control. Local comments are never sent to Jira and never embedded into the generated Markdown.
+
+TeamWork writes separate `<PROJECT>-backlog.md` and `<PROJECT>-sprints.md` documents. Backlog never groups by sprint: without explicit rules it is a flat issue list, and with rules it applies only that project's themes and local labels. The Sprints view remains placement-oriented. Use **Analyze** to semantically classify the synchronized project snapshot. Manual rules are preserved; rules marked `source: "analyzer"` are rebuilt from current issues on every analyzer run.
+
+### Semantic analyzer providers
+
+The analyzer uses the bundled Ollama service by default (`qwen2.5:3b`). Pull that model into the persistent Ollama volume before the first analysis: `./start.sh --pull-model`. Under **Integration**, an OpenAI-compatible external endpoint, model, and API key can be connected. Connection does not activate it: choose Ollama or External LLM explicitly and save. External keys are AES-256-GCM encrypted in the private `llm-secrets` Docker volume and are never written to workspace or grouping files. The LLM classifies technical meaning and returns descriptions, examples, and exact issue memberships rather than keyword regexes.
 
 ### Task labels and grouping priority
 

@@ -16,7 +16,7 @@ export class McpClient {
       });
     } catch (error) {
       const cause = error.cause?.message || error.cause?.code || error.message;
-      throw new Error(`MCP Gateway недоступен по адресу ${this.url}: ${cause}`);
+      throw new Error(`Встроенный Jira MCP недоступен по адресу ${this.url}: ${cause}`);
     }
     if (!response.ok) throw new Error(`MCP HTTP ${response.status}: ${await response.text()}`);
     this.sessionId ||= response.headers.get('mcp-session-id');

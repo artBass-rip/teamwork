@@ -1,4 +1,3 @@
-import {groupMarkdownBySprint} from './sprints.js';
 import {plainTaskText, writeRichClipboard} from './clipboard.js';
 
 const $ = selector => document.querySelector(selector);
@@ -12,6 +11,24 @@ let labelCatalog = [];
 let sourceDocument = '';
 let sourceConfig = null;
 let viewerMode = 'document';
+let activeProject = '';
+let availableProjects = [];
+let selectedProjects = [];
+let language = localStorage.getItem('teamwork-language') || 'ru';
+
+const messages = {
+  ru: {projects:'Проекты',logs:'Журнал',integration:'Интеграция',configuration:'Конфигурация',syncNow:'Обновить сейчас',availableProjects:'Доступные проекты',projectsHint:'Выберите проекты, которые TeamWork будет опрашивать и анализировать по расписанию.',searchProjects:'Найти проект',saveSelection:'Сохранить выбор',selected:n=>`Выбрано: ${n}`,waiting:'Ожидание синхронизации',updating:'Обновление…',issues:n=>`${n} задач`,noProjects:'Доступных проектов не найдено',selectOne:'Выберите хотя бы один проект',selectionSaved:'Выбор сохранён, документы обновлены',structure:'Структура',searchDocument:'Найти в документе',collapse:'Свернуть',expand:'Развернуть',analyzeProject:'Анализировать',eventLog:'Журнал событий',eventsHint:'Последние события приложения и MCP-синхронизации. Секреты не записываются.',refresh:'Обновить',atlassianIntegration:'Интеграция Atlassian',connectAtlassian:'Подключить Atlassian',refreshStatus:'Обновить статус',disconnect:'Отключить',jiraBaseUrl:'Адрес Jira',saveUrl:'Сохранить адрес',jiraBaseUrlHint:'Используется для ссылок на задачи и хранится в рабочей директории проекта.',llmTitle:'Модель анализатора',llmHint:'Подключение внешней LLM не включает её автоматически.',externalLlm:'Внешняя LLM',saveLlm:'Сохранить подключение',groupingPattern:'Правила группировки',configHint:'Правила независимы для каждого проекта. Анализатор только добавляет новые темы.',save:'Сохранить'},
+  en: {projects:'Projects',logs:'Logs',integration:'Integration',configuration:'Configuration',syncNow:'Sync now',availableProjects:'Available projects',projectsHint:'Select the projects TeamWork should poll and analyze on schedule.',searchProjects:'Search projects',saveSelection:'Save selection',selected:n=>`Selected: ${n}`,waiting:'Waiting for synchronization',updating:'Updating…',issues:n=>`${n} issues`,noProjects:'No available projects found',selectOne:'Select at least one project',selectionSaved:'Selection saved and documents refreshed',structure:'Outline',searchDocument:'Search document',collapse:'Collapse',expand:'Expand',analyzeProject:'Analyze',eventLog:'Event log',eventsHint:'Recent application and MCP synchronization events. Secrets are never logged.',refresh:'Refresh',atlassianIntegration:'Atlassian integration',connectAtlassian:'Connect Atlassian',refreshStatus:'Refresh status',disconnect:'Disconnect',jiraBaseUrl:'Jira address',saveUrl:'Save address',jiraBaseUrlHint:'Used for issue links and stored in the project working directory.',llmTitle:'Analyzer model',llmHint:'Connecting an external LLM does not activate it automatically.',externalLlm:'External LLM',saveLlm:'Save connection',groupingPattern:'Grouping rules',configHint:'Rules are independent for every project. The analyzer only appends new themes.',save:'Save'}
+};
+const t = (key, value) => typeof messages[language][key] === 'function' ? messages[language][key](value) : messages[language][key] || key;
+
+function applyLanguage() {
+  document.documentElement.lang = language;
+  document.querySelectorAll('[data-i18n]').forEach(node => { node.textContent = t(node.dataset.i18n); });
+  document.querySelectorAll('[data-i18n-placeholder]').forEach(node => { node.placeholder = t(node.dataset.i18nPlaceholder); });
+  $('#language-toggle').textContent = language === 'ru' ? 'EN' : 'RU';
+  renderProjects();
+}
 
 function slug(value) {
   const base = value.toLowerCase().replace(/<[^>]+>/g, '').replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-|-$/g, '') || 'section';
@@ -58,7 +75,7 @@ function parseMarkdown(markdown) {
       const text = heading[2].replace(/\*\*/g, '');
       const id = slug(text);
       const plainText = text.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
-      const issueKey = level === 5 ? plainText.match(/\b[A-Z][A-Z0-9_]*-\d+\b/)?.[0] : null;
+      const issueKey = level >= 2 ? plainText.match(/\b[A-Z][A-Z0-9_]*-\d+\b/)?.[0] : null;
       headings.push({level, text: plainText, id});
       const collapsible = level >= 2 && level <= 5;
       const commentAction = issueKey ? `<button class="comment-trigger" data-issue-key="${issueKey}" aria-label="Открыть комментарии к ${issueKey}" title="Локальные комментарии"><span>💬</span><b hidden>0</b></button>` : '';
@@ -351,25 +368,74 @@ async function deleteComment(commentId) {
   await loadComments();
 }
 
-async function load() {
-  const [doc, cfg, status] = await Promise.all([
-    fetch('/api/document').then(response => response.text()),
-    fetch('/api/config').then(response => response.json()),
-    fetch('/api/status').then(response => response.json())
-  ]);
-  sourceDocument = doc;
-  sourceConfig = cfg;
-  $('#editor').value = JSON.stringify(cfg, null, 2);
+function renderProjectTabs() {
+  $('#project-tabs').innerHTML = selectedProjects.map(project => `<button class="tab project-tab${project.key === activeProject ? ' active' : ''}" data-project="${escapeHtml(project.key)}">${escapeHtml(project.key)}</button>`).join('');
+  document.querySelectorAll('.project-tab').forEach(button => button.addEventListener('click', () => openProject(button.dataset.project)));
+}
+
+function renderProjects() {
+  const container = $('#projects-list');
+  if (!container) return;
+  const query = ($('#project-search')?.value || '').trim().toLowerCase();
+  const selected = new Set(selectedProjects.map(project => project.key));
+  const visible = availableProjects.filter(project => `${project.key} ${project.name}`.toLowerCase().includes(query));
+  container.innerHTML = visible.length ? visible.map(project => `<label class="project-option"><input type="checkbox" value="${escapeHtml(project.key)}"${selected.has(project.key) ? ' checked' : ''}><span class="project-key">${escapeHtml(project.key)}</span><span><strong>${escapeHtml(project.name)}</strong><small>${escapeHtml(project.type || 'Jira')}</small></span></label>`).join('') : `<p>${t('noProjects')}</p>`;
+  $('#projects-selection-count').textContent = t('selected', selected.size);
+  container.querySelectorAll('input').forEach(input => input.addEventListener('change', () => {
+    const project = availableProjects.find(item => item.key === input.value);
+    selectedProjects = input.checked ? [...selectedProjects, project] : selectedProjects.filter(item => item.key !== input.value);
+    $('#projects-selection-count').textContent = t('selected', selectedProjects.length);
+  }));
+}
+
+async function loadProjects() {
+  const response = await fetch('/api/projects');
+  const result = await response.json();
+  availableProjects = result.projects || [];
+  selectedProjects = result.selected || [];
+  if (result.error) $('#projects-message').textContent = result.error;
+  renderProjectTabs();
+  renderProjects();
+}
+
+function activateView(view) {
+  document.querySelectorAll('.view').forEach(node => node.classList.remove('active'));
+  $(`#${view}`).classList.add('active');
+  document.querySelectorAll('.tabs > .tab').forEach(node => node.classList.toggle('active', node.dataset.view === view));
+}
+
+async function openProject(projectKey) {
+  activeProject = projectKey;
+  activateView('document');
+  renderProjectTabs();
+  await loadProjectGrouping();
+  sourceDocument = await fetch(`/api/document?project=${encodeURIComponent(projectKey)}&mode=${viewerMode}`).then(response => response.text());
   renderViewer();
+  await Promise.all([loadAllComments(), loadAllLabels()]);
+}
+
+async function load() {
+  const status = await fetch('/api/status').then(response => response.json());
+  await loadProjects();
+  activeProject = activeProject || selectedProjects[0]?.key || '';
+  if (activeProject) { await loadProjectGrouping(); sourceDocument = await fetch(`/api/document?project=${encodeURIComponent(activeProject)}&mode=${viewerMode}`).then(response => response.text()); }
+  if (sourceDocument) renderViewer();
   await Promise.all([loadAllComments(), loadAllLabels()]);
   showStatus(status);
 }
 
+async function loadProjectGrouping() {
+  if (!activeProject) { sourceConfig = {grouping: {themes: []}}; $('#editor').value = JSON.stringify(sourceConfig.grouping, null, 2); return; }
+  const result = await fetch(`/api/grouping?project=${encodeURIComponent(activeProject)}`).then(response => response.json());
+  sourceConfig = {grouping: result.grouping};
+  $('#editor').value = JSON.stringify(result.grouping, null, 2);
+}
+
 function renderViewer() {
-  const markdown = viewerMode === 'sprints' ? groupMarkdownBySprint(sourceDocument, sourceConfig) : sourceDocument;
+  const markdown = sourceDocument;
   const parsed = parseMarkdown(markdown);
   $('#markdown').innerHTML = parsed.html;
-  $('#document-meta').textContent = `${viewerMode === 'sprints' ? 'По спринтам' : 'Документ'} · ${markdown.split('\n').length.toLocaleString()} строк · ${parsed.headings.length} разделов`;
+  $('#document-meta').textContent = `${activeProject} · ${viewerMode === 'sprints' ? 'Sprints' : 'Backlog'} · ${markdown.split('\n').length.toLocaleString()} ${language === 'ru' ? 'строк' : 'lines'} · ${parsed.headings.length} ${language === 'ru' ? 'разделов' : 'sections'}`;
   $('#search').value = '';
   wireViewer(parsed.headings);
 }
@@ -379,13 +445,13 @@ function showStatus(state) {
   const sync = $('#sync');
   sync.disabled = Boolean(state.running);
   status.className = `status ${state.running ? 'running' : state.lastError ? 'failed' : state.lastSuccess ? 'success' : ''}`;
-  status.textContent = state.running ? 'Обновление…' : state.lastSuccess ? `${state.issues} задач · ${new Date(state.lastSuccess).toLocaleString()}` : 'Ожидание синхронизации';
+  status.textContent = state.running ? t('updating') : state.lastSuccess ? `${t('issues', state.issues)} · ${new Date(state.lastSuccess).toLocaleString(language)}` : t('waiting');
   const banner = $('#error-banner');
   if (state.lastError) {
     const unauthorized = /401|unauthorized/i.test(state.lastError);
     $('#error-title').textContent = unauthorized ? 'MCP не авторизован' : 'Ошибка синхронизации';
     $('#error-detail').textContent = unauthorized
-      ? 'Docker MCP Gateway отклонил запрос. Перезапустите сервис через ./start.sh; авторизацией Atlassian управляет профиль Docker MCP.'
+      ? 'Встроенный Jira MCP не авторизован. Откройте вкладку «Интеграция» и подключите Atlassian.'
       : state.lastError;
     banner.hidden = false;
   }
@@ -401,17 +467,50 @@ async function loadLogs() {
   }).join('') || '<div class="empty-logs">Событий пока нет.</div>';
 }
 
-document.querySelectorAll('.tab').forEach(button => button.addEventListener('click', () => {
-  document.querySelectorAll('.tab,.view').forEach(node => node.classList.remove('active'));
-  button.classList.add('active'); $(`#${button.dataset.view}`).classList.add('active');
-  if (button.dataset.mode) {
-    viewerMode = button.dataset.mode;
-    if (sourceDocument && sourceConfig) renderViewer();
-  }
+async function loadJiraAuth() {
+  const [response, workspaceResponse, llmResponse] = await Promise.all([fetch('/api/jira-auth/status'), fetch('/api/workspace'), fetch('/api/llm')]);
+  const [state, workspace, llm] = await Promise.all([response.json(), workspaceResponse.json(), llmResponse.json()]);
+  $('#jira-base-url').value = workspace.jiraBaseUrl || '';
+  const connected = Boolean(state.connected);
+  $('#jira-auth-dot').className = `integration-dot ${connected ? 'connected' : state.error ? 'failed' : ''}`;
+  $('#jira-auth-title').textContent = connected ? (language === 'ru' ? 'Atlassian подключён' : 'Atlassian connected') : (language === 'ru' ? 'Требуется авторизация Atlassian' : 'Atlassian authorization required');
+  $('#jira-auth-detail').textContent = state.error || (connected ? (language === 'ru' ? 'OAuth-сессия обновляется автоматически.' : 'The OAuth session refreshes automatically.') : (language === 'ru' ? 'Подключите Atlassian через браузер.' : 'Connect Atlassian in your browser.'));
+  $('#jira-provider').textContent = state.provider || '—';
+  $('#jira-configured').textContent = state.authentication === 'browser-oauth-2.1' ? 'Browser OAuth 2.1' : '—';
+  $('#jira-sites').textContent = state.resources?.length ? state.resources.map(site => `${site.name} (${site.id})`).join(', ') : (language === 'ru' ? 'Нет' : 'None');
+  $('#connect-jira').disabled = !state.configured || connected;
+  $('#disconnect-jira').disabled = !connected;
+  document.querySelector(`input[name="llm-provider"][value="${llm.provider}"]`).checked=true;
+  $('#ollama-model').value=llm.ollamaModel||''; $('#external-llm-url').value=llm.external?.baseUrl||''; $('#external-llm-model').value=llm.external?.model||'';
+  $('#external-llm-key').placeholder=llm.external?.configured?'Сохранён / configured':'••••••••';
+}
+
+document.querySelectorAll('.tabs > .tab').forEach(button => button.addEventListener('click', () => {
+  activateView(button.dataset.view);
   if (button.dataset.view === 'logs') loadLogs();
+  if (button.dataset.view === 'integration') loadJiraAuth();
 }));
+document.querySelectorAll('.document-mode').forEach(button => button.addEventListener('click', () => {
+  viewerMode = button.dataset.mode;
+  document.querySelectorAll('.document-mode').forEach(node => node.classList.toggle('active', node === button));
+  if (activeProject) openProject(activeProject);
+}));
+$('#language-toggle').addEventListener('click', () => { language = language === 'ru' ? 'en' : 'ru'; localStorage.setItem('teamwork-language', language); applyLanguage(); if (sourceDocument) renderViewer(); });
+$('#project-search').addEventListener('input', renderProjects);
+$('#save-projects').addEventListener('click', async () => {
+  if (!selectedProjects.length) { $('#projects-message').textContent = t('selectOne'); return; }
+  $('#projects-message').textContent = language === 'ru' ? 'Сохранение и синхронизация…' : 'Saving and synchronizing…';
+  const response = await fetch('/api/projects/selection', {method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({projects:selectedProjects})});
+  const result = await response.json();
+  if (!response.ok) { $('#projects-message').textContent = result.error; return; }
+  selectedProjects = result.selected;
+  activeProject = selectedProjects.some(project => project.key === activeProject) ? activeProject : selectedProjects[0]?.key || '';
+  $('#projects-message').textContent = result.sync?.lastError || t('selectionSaved');
+  await load();
+});
 $('#sync').addEventListener('click', async () => { showStatus({running:true}); const state = await fetch('/api/sync',{method:'POST'}).then(r=>r.json()); showStatus(state); await load(); });
-$('#save').addEventListener('click', async () => { try { const value=JSON.parse($('#editor').value); const response=await fetch('/api/config',{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify(value)}); const result=await response.json(); if(!response.ok) throw Error(result.error); $('#message').textContent='Конфигурация сохранена'; } catch(error) { $('#message').textContent=`Ошибка: ${error.message}`; } });
+$('#save').addEventListener('click', async () => { try { if(!activeProject) throw Error(t('selectOne')); const grouping=JSON.parse($('#editor').value); const response=await fetch('/api/grouping',{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({project:activeProject,grouping})}); const result=await response.json(); if(!response.ok) throw Error(result.error); sourceConfig = {grouping: result.grouping}; $('#message').textContent=language === 'ru' ? `Правила ${activeProject} сохранены` : `${activeProject} rules saved`; showStatus(result.sync); } catch(error) { $('#message').textContent=`${language === 'ru' ? 'Ошибка' : 'Error'}: ${error.message}`; } });
+$('#analyze-project').addEventListener('click', async () => { if(!activeProject) return; const button=$('#analyze-project'); button.disabled=true; button.textContent=language==='ru'?'Анализ…':'Analyzing…'; const response=await fetch(`/api/projects/${encodeURIComponent(activeProject)}/analyze`,{method:'POST'}); const result=await response.json(); button.disabled=false; button.textContent=t('analyzeProject'); if(!response.ok){showStatus({lastError:result.error});return;} sourceConfig={grouping:result.grouping}; $('#editor').value=JSON.stringify(result.grouping,null,2); $('#message').textContent=language==='ru'?`Добавлено правил: ${result.themes.length}`:`Rules added: ${result.themes.length}`; showStatus(result.sync); await openProject(activeProject); });
 $('#dismiss-error').addEventListener('click', () => $('#error-banner').hidden = true);
 $('#collapse-all').addEventListener('click', () => {
   document.querySelectorAll('.markdown h2,.markdown h3,.markdown h4,.markdown h5').forEach(heading => heading.classList.add('collapsed'));
@@ -442,6 +541,27 @@ $('#search').addEventListener('input', event => {
 });
 $('#refresh-logs').addEventListener('click', loadLogs);
 $('#log-level').addEventListener('change', loadLogs);
+$('#refresh-jira-auth').addEventListener('click', loadJiraAuth);
+$('#connect-jira').addEventListener('click', async () => {
+  $('#jira-auth-message').textContent = 'Подготовка OAuth…';
+  const response = await fetch('/api/jira-auth/start', {method: 'POST', headers: {'content-type':'application/json'}, body: JSON.stringify({jiraBaseUrl: $('#jira-base-url').value.trim()})});
+  const result = await response.json();
+  if (!response.ok) { $('#jira-auth-message').textContent = result.error; return; }
+  location.href = result.url;
+});
+$('#save-jira-url').addEventListener('click', async () => {
+  const response = await fetch('/api/workspace', {method:'PUT', headers:{'content-type':'application/json'}, body:JSON.stringify({jiraBaseUrl:$('#jira-base-url').value.trim()})});
+  const result = await response.json();
+  $('#jira-auth-message').textContent = response.ok ? (language === 'ru' ? 'Адрес Jira сохранён' : 'Jira address saved') : result.error;
+});
+$('#save-llm').addEventListener('click', async()=>{ const provider=document.querySelector('input[name="llm-provider"]:checked').value; const response=await fetch('/api/llm',{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({provider,ollamaModel:$('#ollama-model').value.trim(),external:{baseUrl:$('#external-llm-url').value.trim(),model:$('#external-llm-model').value.trim(),apiKey:$('#external-llm-key').value.trim()}})}); const result=await response.json(); $('#llm-status').textContent=response.ok?(language==='ru'?`Активный провайдер: ${result.provider}`:`Active provider: ${result.provider}`):result.error; if(response.ok) $('#external-llm-key').value=''; });
+$('#disconnect-jira').addEventListener('click', async () => {
+  if (!confirm('Удалить сохранённую авторизацию Atlassian?')) return;
+  const response = await fetch('/api/jira-auth/disconnect', {method: 'DELETE'});
+  const result = await response.json();
+  $('#jira-auth-message').textContent = response.ok ? 'Авторизация Atlassian удалена' : result.error;
+  await loadJiraAuth();
+});
 $('#close-comments').addEventListener('click', closeComments);
 $('#comment-form').addEventListener('submit', async event => {
   event.preventDefault();
@@ -477,5 +597,11 @@ $('#label-form').addEventListener('submit', event => {
   saveLabels([...current, label]);
 });
 
+applyLanguage();
 load();
+if (location.hash === '#integration') {
+  document.querySelector('.tab[data-view="integration"]')?.click();
+  const result = new URLSearchParams(location.search).get('jiraAuth');
+  if (result) $('#jira-auth-message').textContent = result === 'connected' ? 'Atlassian успешно подключён' : `Ошибка OAuth: ${result}`;
+}
 setInterval(() => fetch('/api/status').then(response => response.json()).then(showStatus), 5000);
