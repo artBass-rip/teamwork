@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "module": {"id": "teamwork.jira", "name": "Jira", "version": "2.5.1", "protocolVersion": "1"},
+  "runtime": {"restart": "on-failure"},
+  "executables": {
+    "darwin-arm64": "bin/darwin-arm64/teamwork-jira",
+    "darwin-amd64": "bin/darwin-amd64/teamwork-jira",
+    "linux-arm64": "bin/linux-arm64/teamwork-jira",
+    "linux-amd64": "bin/linux-amd64/teamwork-jira"
+  },
+  "provides": ["jira.account.list", "jira.account.configure", "jira.account.disconnect", "jira.oauth.config", "jira.oauth.start", "jira.oauth.status", "jira.projects", "jira.projects.select", "jira.sync"],
+  "subscribes": []
+}

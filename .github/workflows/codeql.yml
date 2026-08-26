@@ -20,6 +20,5 @@ jobs:
       - uses: actions/checkout@v7
       - uses: github/codeql-action/init@v4
         with:
-          languages: javascript-typescript
+          languages: go
       - uses: github/codeql-action/analyze@v4
-

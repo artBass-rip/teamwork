@@ -1,4 +1,4 @@
-name: Quality and dependency audit
+name: Go quality and portable builds
 
 on:
   push:
@@ -13,16 +13,23 @@ jobs:
   validate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
         with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: |
-            package-lock.json
-            mcp/package-lock.json
-      - run: npm ci
-      - run: npm --prefix mcp ci
-      - run: npm run check
-      - run: npm audit --audit-level=high
-      - run: npm --prefix mcp audit --audit-level=high
+          go-version: "1.26.6"
+          cache-dependency-path: core/go.sum
+      - run: go test ./...
+        working-directory: core
+      - run: go vet ./...
+        working-directory: core
+      - run: go test ./...
+        working-directory: sdk/go
+      - run: go test ./...
+        working-directory: modules/echo-go
+      - run: go test ./...
+        working-directory: modules/activity-go
+      - run: go test ./...
+        working-directory: modules/project-view-go
+      - run: go test ./...
+        working-directory: modules/jira-go
+      - run: ./scripts/release.sh

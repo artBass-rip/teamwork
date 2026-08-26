@@ -1,19 +1,15 @@
 # Security Policy
 
-## Supported versions
+Security fixes are provided for the latest revision on `master`. Report suspected vulnerabilities through GitHub Private Vulnerability Reporting rather than a public issue.
 
-Security fixes are provided for the latest release on the `master` branch.
+## Runtime boundaries
 
-## Reporting a vulnerability
+- Core binds the web interface to `127.0.0.1` by default.
+- Module IPC uses a user-private Unix Domain Socket with mode `0600`.
+- Every subprocess receives a new random 256-bit registration token.
+- Modules communicate through the core; direct module-to-module connections are unsupported.
+- RPC messages are bounded to 4 MiB.
+- Secrets are not stored in SQLite. Native adapters target macOS Keychain and Linux Secret Service.
+- Release binaries are built with `CGO_ENABLED=0`; users do not need language runtimes or local environments.
 
-Do not open a public issue for a suspected vulnerability. Use GitHub **Private vulnerability reporting** on the repository Security tab. Include reproduction steps, affected versions, impact, and any suggested mitigation.
-
-The maintainer aims to acknowledge reports within seven days. Disclosure timing is coordinated after validation and remediation.
-
-## Secrets and local data
-
-Never commit `grouping.config.json`, `.env` files, generated Jira documents, local comments, logs, runtime tokens, or credentials. Browser OAuth uses the official Atlassian Rovo MCP with PKCE and dynamic client registration, so TeamWork does not collect a Client ID, Client Secret, or API token. OAuth session data is stored in an AES-256-GCM envelope in a private Docker volume; the encryption key is generated locally with mode `0600`. The ephemeral internal MCP bearer token is passed only through runtime environment variables.
-
-The Jira MCP sidecar is not published to the host network, validates request authorization and browser origins, exposes read-only Jira tools, and runs without root privileges or Linux capabilities on a read-only root filesystem.
-
-The web service binds to localhost by default. Network deployments must set `APP_AUTH_PASSWORD`, use a strong unique value, and terminate HTTPS in a trusted reverse proxy. Generated-document paths are confined to the runtime `data/` directory.
+The current module permission manifest is descriptive. Network and secret namespace enforcement must be completed before third-party modules are treated as untrusted.

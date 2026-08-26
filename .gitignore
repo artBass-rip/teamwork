@@ -1,14 +1,12 @@
-node_modules/
-data/*
-!data/.gitkeep
-grouping.config.json
-export_do_jira.mjs
-.env
-*.env
-*.log
-*.pid
-.mcp-gateway-token
 .DS_Store
 .idea/
 .vscode/
-*.bcp
+data-v2/
+core/bin/
+modules/*/bin/
+dist/
+*.log
+*.pid
+.env
+*.env
+/ tmp

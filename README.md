@@ -1,28 +1,268 @@
-# TeamWork
+# TeamWork Integration Hub
 
-> **AI disclosure:** this project was created with the assistance of **OpenAI Codex (GPT-5)**. All generated code and documentation remain subject to human review.
+TeamWork — локальный Integration Hub для персональной работы с Jira и последующего подключения Slack, OneNote и других сервисов. Продукт построен вокруг лёгкого Go microkernel: ядро отвечает только за запуск, безопасность и взаимодействие модулей, а вся прикладная функциональность поставляется отдельными portable executable subprocess.
 
-A Dockerized service that periodically reads Jira issues through its bundled read-only Jira MCP server, groups them using a configurable hierarchy, generates a Markdown document, and presents it in a web interface. Local task comments are stored independently from Jira and the generated document.
+Текущая версия: `2.0.0-alpha.1`.
 
-The primary documentation is [README.en.md](README.en.md). Russian documentation is available in [README.ru.md](README.ru.md).
+## Что уже работает
 
-- [English documentation](README.en.md)
-- [Русская документация](README.ru.md)
-- [English changelog](CHANGELOG.en.md)
-- [Журнал изменений на русском](CHANGELOG.ru.md)
-- [Security policy](SECURITY.md)
+- нативный запуск на macOS и Ubuntu без Python, Node.js, Docker и виртуальных окружений;
+- отдельный локальный subprocess для каждого модуля;
+- Unix Domain Socket JSON-RPC 2.0 с правами `0600` и одноразовым IPC-токеном процесса;
+- обнаружение portable-модулей по manifest и автоматический restart после сбоя;
+- capability router и durable event bus;
+- SQLite/WAL для состояния ядра, событий и логов;
+- уровни логирования `DEBUG`, `INFO`, `WARN`, `ERROR`, фильтрация в UI и retention 48 часов;
+- системное хранилище секретов: macOS Keychain или Linux Secret Service;
+- localhost web UI на `http://127.0.0.1:8090`;
+- подключение нескольких Jira Cloud аккаунтов через browser-based OAuth;
+- выбор нескольких Jira-проектов и полная постраничная синхронизация задач;
+- общий список задач и отдельные вкладки проектов;
+- группировка по спринтам: незавершённые по убыванию номера, затем backlog, затем завершённые;
+- фильтры по статусу, исполнителю, автору, ключевым словам и локальным меткам;
+- локальные комментарии и метки, сохраняемые между Jira-синхронизациями;
+- создание, выбор, снятие и глобальное удаление локальных меток;
+- включаемая группировка задач по локальным меткам;
+- ссылки на Jira и CSV-экспорт текущего отфильтрованного списка;
+- установка как пользовательского LaunchAgent или `systemd --user` service.
 
-## Quick start
+Slack, OneNote, workflow-связи и единый полнотекстовый/RAG-поиск входят в целевую архитектуру, но ещё не реализованы в текущем alpha-срезе.
+
+## Архитектура
+
+```text
+Browser / local API clients
+            │ HTTP on 127.0.0.1
+            ▼
+┌─────────────────────────────────────────────┐
+│              TeamWork Go Core               │
+│ HTTP shell · supervisor · capability router │
+│ durable events · SQLite · secret broker     │
+└──────────────────────┬──────────────────────┘
+                       │ Unix socket / NDJSON
+          ┌────────────┼──────────────┐
+          ▼            ▼              ▼
+   Project View      Jira         Activity / Echo
+    subprocess     subprocess       subprocesses
+```
+
+Основные правила:
+
+1. Модуль является автономным исполняемым файлом и запускается ядром как отдельный subprocess.
+2. Модули не импортируют код и не вызывают процессы друг друга напрямую.
+3. Вызовы проходят через именованные capabilities ядра.
+4. События доставляются как минимум один раз, поэтому обработчики должны быть идемпотентными.
+5. Секреты не хранятся в SQLite, manifest, исходном коде или state-файлах модулей.
+6. Новый модуль подключается размещением каталога с `module.json` и бинарником нужной платформы.
+
+Контракты: [протокол модулей](specs/protocol-v1.md) и [JSON Schema manifest](specs/module-manifest.schema.json).
+
+## Состав репозитория
+
+```text
+core/                    Go microkernel и localhost HTTP shell
+modules/
+  activity-go/           журнал демонстрационных событий
+  echo-go/               минимальный пример capability-модуля
+  jira-go/               Jira Cloud OAuth, проекты и синхронизация
+  project-view-go/       локальная модель задач и web UI
+sdk/go/                  Go runtime SDK для portable-модулей
+specs/                   protocol v1 и schema manifest
+scripts/build.sh          сборка текущей платформы
+scripts/release.sh        кроссплатформенные release-пакеты
+start.sh                  локальный запуск
+```
+
+## Требования
+
+Для разработки нужен Go `1.26` или новее. Для запуска готового release-пакета Go и другие runtime-окружения не нужны.
+
+Поддерживаемые цели:
+
+- macOS arm64 и amd64;
+- Linux arm64 и amd64.
+
+На Linux для системного хранилища секретов нужен `secret-tool` и доступный Secret Service, например GNOME Keyring.
+
+## Быстрый старт
 
 ```bash
-cp grouping.config.example.json grouping.config.json
-# Edit grouping.config.json; the bundled Jira MCP server is always used.
-chmod +x start.sh
+./scripts/build.sh
 ./start.sh
 ```
 
-Open <http://localhost:8080>.
+Откройте [http://127.0.0.1:8090](http://127.0.0.1:8090).
 
-## License
+Если порт занят, остановите уже запущенный экземпляр или задайте другой адрес:
 
-[MIT](LICENSE)
+```bash
+TEAMWORK_ADDRESS=127.0.0.1:8091 ./start.sh
+```
+
+## Команды ядра
+
+```bash
+./core/bin/teamwork serve            # запустить приложение
+./core/bin/teamwork version          # показать версию ядра
+./core/bin/teamwork modules          # показать обнаруженные модули
+./core/bin/teamwork paths            # показать системные пути
+./core/bin/teamwork service-install  # создать definition системного сервиса
+```
+
+`service-install` создаёт файл сервиса, но не активирует его автоматически.
+
+macOS:
+
+```bash
+launchctl load ~/Library/LaunchAgents/com.teamwork.hub.plist
+```
+
+Ubuntu:
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now teamwork.service
+```
+
+## Подключение Jira
+
+1. Запустите TeamWork и откройте раздел «Интеграции».
+2. Нажмите «Войти в Jira».
+3. Завершите авторизацию на официальной странице Atlassian.
+4. Выберите один или несколько доступных проектов.
+5. Запустите синхронизацию.
+
+TeamWork использует официальный Atlassian Rovo MCP endpoint и OAuth 2.1 discovery, Dynamic Client Registration и PKCE. Пользователю не нужны `Client ID`, `Client Secret`, API token, пароль или cookies браузера. Callback принимается только локально:
+
+```text
+http://127.0.0.1:8976/oauth/jira/callback
+```
+
+Организация Atlassian может потребовать разрешить Rovo MCP и localhost redirect в Admin Hub.
+
+После синхронизации Jira connector передаёт Project View данные задач, автора, исполнителя, статус, ссылку и состояние спринта. Jira labels и Jira comments намеренно не импортируются: метки и комментарии TeamWork являются локальными пользовательскими данными.
+
+## Работа с задачами
+
+### Списки и фильтры
+
+Вкладка «Все задачи» объединяет выбранные Jira-проекты. Каждый проект также имеет собственную вкладку. Доступны live-фильтры с мультивыбором по статусу, исполнителю, автору и локальным меткам, а также поиск по ключевым словам.
+
+Задачи сортируются по убыванию числовой части Jira-ключа: `DO-100`, `DO-20`, `DO-9`.
+
+### Спринты
+
+Подвкладка «По спринтам» группирует задачи в порядке:
+
+1. незавершённые спринты (`active`, `future`) по убыванию номера;
+2. backlog;
+3. завершённые спринты (`closed`, `completed`) по убыванию номера.
+
+### Локальные метки
+
+- метки создаются и хранятся только в TeamWork;
+- существующие метки предлагаются во время ввода;
+- новый текст создаёт новую метку;
+- крестик в карточке снимает метку с одной задачи;
+- крестик в каталоге фильтра удаляет метку со всех задач после подтверждения;
+- клик по метке включает соответствующий фильтр;
+- группировку по меткам можно включать и отключать.
+
+Локальные метки и комментарии сохраняются при последующих Jira-синхронизациях.
+
+### CSV-экспорт
+
+Кнопка «Экспорт CSV» выгружает текущий список с учётом выбранного проекта, поиска и фильтров. Файл содержит проект, ключ и название задачи, статус, исполнителя, автора, спринт, локальные метки и комментарии, а также ссылку Jira.
+
+CSV формируется локально в браузере, кодируется в UTF-8 с BOM и экранирует потенциальные spreadsheet formulas.
+
+Кнопка «Импорт Jira» предназначена для ручного импорта локального JSON snapshot. Обычная Jira-синхронизация выполняется кнопкой «Обновить» или из раздела интеграции.
+
+## Локальные данные
+
+Пути можно посмотреть командой:
+
+```bash
+./core/bin/teamwork paths
+```
+
+По умолчанию на macOS данные находятся в:
+
+```text
+~/Library/Application Support/TeamWork/
+~/Library/Logs/TeamWork/
+```
+
+На Ubuntu используются XDG-каталоги:
+
+```text
+~/.config/teamwork/
+~/.local/share/teamwork/
+~/.local/state/teamwork/
+```
+
+Для изолированного тестового запуска можно задать `TEAMWORK_HOME`. Каталог модулей переопределяется через `TEAMWORK_MODULES_DIR`, адрес HTTP — через `TEAMWORK_ADDRESS`.
+
+## API и capabilities
+
+```bash
+curl -sS http://127.0.0.1:8090/api/health
+
+curl -sS -X POST \
+  -H 'content-type: application/json' \
+  -d '{"payload":{"message":"hello"}}' \
+  http://127.0.0.1:8090/api/capabilities/example.echo
+```
+
+HTTP API доступен только на loopback по умолчанию. Не публикуйте его во внешнюю сеть без отдельной аутентификации и reverse proxy.
+
+## Создание модуля
+
+```text
+modules/example/
+  module.json
+  bin/
+    darwin-arm64/example
+    darwin-amd64/example
+    linux-arm64/example
+    linux-amd64/example
+```
+
+Manifest объявляет идентификатор, версию протокола, исполняемые файлы, предоставляемые capabilities и event subscriptions. Ядро передаёт процессу:
+
+- `TEAMWORK_CORE_SOCKET`;
+- `TEAMWORK_MODULE_ID`;
+- `TEAMWORK_MODULE_TOKEN`;
+- `TEAMWORK_MODULE_DATA`.
+
+Модуль может быть написан на любом языке, если он выпускается как автономный executable и реализует protocol v1. Go SDK в `sdk/go` является референсной реализацией, а не обязательной зависимостью.
+
+## Разработка и проверки
+
+```bash
+(cd core && go test ./... && go vet ./...)
+(cd sdk/go && go test ./... && go vet ./...)
+(cd modules/echo-go && go test ./... && go vet ./...)
+(cd modules/activity-go && go test ./... && go vet ./...)
+(cd modules/project-view-go && go test ./... && go vet ./...)
+(cd modules/jira-go && go test ./... && go vet ./...)
+```
+
+```bash
+./scripts/build.sh    # текущая платформа
+./scripts/release.sh  # macOS/Linux arm64/amd64 в dist/
+```
+
+Артефакты `core/bin/`, `modules/*/bin/` и `dist/` не коммитятся.
+
+## Безопасность
+
+О правилах хранения секретов, модели доверия localhost и сообщении об уязвимостях см. [SECURITY.md](SECURITY.md).
+
+## История изменений
+
+См. [CHANGELOG.md](CHANGELOG.md).
+
+## Лицензия
+
+[MIT](LICENSE) © 2026 artBass-rip

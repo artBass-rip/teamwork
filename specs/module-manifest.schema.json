@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://teamwork.local/schemas/module-manifest-v1.json",
+  "type": "object",
+  "required": ["schemaVersion", "module", "executables", "provides", "subscribes"],
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "module": {
+      "type": "object",
+      "required": ["id", "name", "version", "protocolVersion"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$"},
+        "name": {"type": "string"},
+        "version": {"type": "string"},
+        "protocolVersion": {"const": "1"}
+      }
+    },
+    "executables": {"type": "object", "additionalProperties": {"type": "string"}},
+    "provides": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+    "subscribes": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}
+  }
+}

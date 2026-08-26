@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "module": {"id": "teamwork.echo", "name": "Echo", "version": "1.0.0", "protocolVersion": "1"},
+  "runtime": {"restart": "on-failure"},
+  "executables": {
+    "darwin-arm64": "bin/darwin-arm64/teamwork-echo",
+    "darwin-amd64": "bin/darwin-amd64/teamwork-echo",
+    "linux-arm64": "bin/linux-arm64/teamwork-echo",
+    "linux-amd64": "bin/linux-amd64/teamwork-echo"
+  },
+  "provides": ["example.echo"],
+  "subscribes": []
+}

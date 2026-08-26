@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "module": {"id": "teamwork.project-view", "name": "Project View", "version": "1.10.0", "protocolVersion": "1"},
+  "runtime": {"restart": "on-failure"},
+  "executables": {
+    "darwin-arm64": "bin/darwin-arm64/teamwork-project-view",
+    "darwin-amd64": "bin/darwin-amd64/teamwork-project-view",
+    "linux-arm64": "bin/linux-arm64/teamwork-project-view",
+    "linux-amd64": "bin/linux-amd64/teamwork-project-view"
+  },
+  "provides": ["ui.app.render", "projectview.state", "projectview.import", "projectview.issue.update", "projectview.label.delete", "projectview.labels.apply", "projectview.sync"],
+  "subscribes": []
+}

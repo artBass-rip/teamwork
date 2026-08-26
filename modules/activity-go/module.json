@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "module": {"id": "teamwork.activity", "name": "Activity", "version": "1.0.0", "protocolVersion": "1"},
+  "runtime": {"restart": "on-failure"},
+  "executables": {
+    "darwin-arm64": "bin/darwin-arm64/teamwork-activity",
+    "darwin-amd64": "bin/darwin-amd64/teamwork-activity",
+    "linux-arm64": "bin/linux-arm64/teamwork-activity",
+    "linux-amd64": "bin/linux-amd64/teamwork-activity"
+  },
+  "provides": ["activity.stats"],
+  "subscribes": ["*"]
+}
