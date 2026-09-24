@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "module": {"id": "teamwork.project-view", "name": "Project View", "version": "1.10.0", "protocolVersion": "1"},
+  "module": {"id": "teamwork.project-view", "name": "Project View", "version": "1.11.0", "protocolVersion": "1"},
   "runtime": {"restart": "on-failure"},
   "executables": {
     "darwin-arm64": "bin/darwin-arm64/teamwork-project-view",

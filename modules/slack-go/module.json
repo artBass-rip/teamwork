@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "module": {"id": "teamwork.slack", "name": "Slack", "version": "0.2.0", "protocolVersion": "1"},
+  "runtime": {"restart": "on-failure"},
+  "executables": {
+    "darwin-arm64": "bin/darwin-arm64/teamwork-slack",
+    "darwin-amd64": "bin/darwin-amd64/teamwork-slack",
+    "linux-arm64": "bin/linux-arm64/teamwork-slack",
+    "linux-amd64": "bin/linux-amd64/teamwork-slack"
+  },
+  "provides": ["slack.account.list", "slack.account.configure", "slack.account.disconnect", "slack.content.get", "slack.notify.ephemeral"],
+  "subscribes": []
+}

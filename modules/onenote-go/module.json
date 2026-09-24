@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "module": {"id": "teamwork.onenote", "name": "OneNote", "version": "0.2.0", "protocolVersion": "1"},
+  "runtime": {"restart": "on-failure"},
+  "executables": {
+    "darwin-arm64": "bin/darwin-arm64/teamwork-onenote",
+    "darwin-amd64": "bin/darwin-amd64/teamwork-onenote",
+    "linux-arm64": "bin/linux-arm64/teamwork-onenote",
+    "linux-amd64": "bin/linux-amd64/teamwork-onenote"
+  },
+  "provides": ["onenote.config.get", "onenote.config.set", "onenote.oauth.start", "onenote.oauth.status", "onenote.account.list", "onenote.account.disconnect", "onenote.pages.list", "onenote.pages.cached", "onenote.page.save"],
+  "subscribes": []
+}

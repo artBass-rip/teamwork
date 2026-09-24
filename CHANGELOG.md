@@ -6,15 +6,25 @@
 
 ### Planned
 
-- Slack multi-workspace connector и Socket Mode;
-- OneNote Personal connector через Microsoft Graph delegated OAuth;
-- связи Slack ↔ Jira ↔ OneNote и workflow-модули;
+- синхронизация новых ответов в ранее сохранённом Slack thread;
+- external-search каталога OneNote pages для секций с более чем 100 страницами;
+- дополнительные связи Slack ↔ Jira ↔ OneNote;
 - единый индекс поиска и интерфейсы LLM/RAG;
 - локальный пользовательский CLI для сценариев интеграции.
 
 ## [2.0.0-alpha.1] — 2026-08-26
 
 ### Added
+
+- Slack multi-workspace connector с отдельными Secret Broker references и Socket Mode connections;
+- native Slack message shortcut `teamwork_save_onenote`;
+- выбор одного сообщения или всего Slack thread с полной пагинацией;
+- OneNote Personal connector через Microsoft Graph delegated OAuth, public-client PKCE и loopback callback;
+- автоматический поиск или создание секции `Operation Notes`;
+- выбор существующей страницы или создание отдельной OneNote page для каждого сохранения;
+- Slack → OneNote workflow subprocess, локальные связи и ephemeral-уведомления;
+- открытие Slack modal больше не зависит от задержки Microsoft Graph: страницы OneNote кэшируются локально и обновляются в фоне;
+- журналирование входящих Slack interactions и ошибок `views.open`;
 
 - Go microkernel, localhost HTTP shell и portable subprocess supervisor;
 - Unix Domain Socket JSON-RPC 2.0 transport и protocol v1;

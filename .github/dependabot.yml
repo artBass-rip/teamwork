@@ -4,6 +4,10 @@ updates:
     directory: /core
     schedule:
       interval: weekly
+  - package-ecosystem: gomod
+    directory: /modules/slack-go
+    schedule:
+      interval: weekly
   - package-ecosystem: github-actions
     directory: /
     schedule:

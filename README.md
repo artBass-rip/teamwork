@@ -24,9 +24,12 @@ TeamWork — локальный Integration Hub для персональной 
 - создание, выбор, снятие и глобальное удаление локальных меток;
 - включаемая группировка задач по локальным меткам;
 - ссылки на Jira и CSV-экспорт текущего отфильтрованного списка;
-- установка как пользовательского LaunchAgent или `systemd --user` service.
+- установка как пользовательского LaunchAgent или `systemd --user` service;
+- Slack multi-workspace connector через Socket Mode;
+- OneNote Personal connector с delegated OAuth;
+- сохранение отдельного Slack-сообщения или всего thread на существующую либо новую страницу `Operation Notes`.
 
-Slack, OneNote, workflow-связи и единый полнотекстовый/RAG-поиск входят в целевую архитектуру, но ещё не реализованы в текущем alpha-срезе.
+Единый полнотекстовый/RAG-поиск и дополнительные межсервисные workflow входят в целевую архитектуру, но ещё не реализованы в текущем alpha-срезе.
 
 ## Архитектура
 
@@ -66,6 +69,9 @@ modules/
   echo-go/               минимальный пример capability-модуля
   jira-go/               Jira Cloud OAuth, проекты и синхронизация
   project-view-go/       локальная модель задач и web UI
+  slack-go/              Slack multi-workspace и Socket Mode
+  onenote-go/            Microsoft Graph delegated OAuth
+  slack-onenote-go/      workflow message/thread → OneNote
 sdk/go/                  Go runtime SDK для portable-модулей
 specs/                   protocol v1 и schema manifest
 scripts/build.sh          сборка текущей платформы
@@ -141,6 +147,79 @@ http://127.0.0.1:8976/oauth/jira/callback
 Организация Atlassian может потребовать разрешить Rovo MCP и localhost redirect в Admin Hub.
 
 После синхронизации Jira connector передаёт Project View данные задач, автора, исполнителя, статус, ссылку и состояние спринта. Jira labels и Jira comments намеренно не импортируются: метки и комментарии TeamWork являются локальными пользовательскими данными.
+
+## Slack → OneNote
+
+### Настройка Slack App
+
+Создайте Slack App через **Create New App → From a manifest**, выберите workspace и вставьте следующий YAML:
+
+```yaml
+display_information:
+  name: TeamWork Integration Hub
+  description: Save Slack messages and threads to OneNote
+  background_color: "#4f46e5"
+
+features:
+  bot_user:
+    display_name: TeamWork
+    always_online: false
+  shortcuts:
+    - name: Save to OneNote
+      type: message
+      callback_id: teamwork_save_onenote
+      description: Save this message or its thread to OneNote
+
+oauth_config:
+  scopes:
+    bot:
+      - channels:history
+      - chat:write
+      - commands
+      - groups:history
+      - im:history
+      - mpim:history
+      - users:read
+
+settings:
+  interactivity:
+    is_enabled: true
+  org_deploy_enabled: false
+  socket_mode_enabled: true
+  token_rotation_enabled: false
+```
+
+После создания приложения:
+
+1. Откройте **Basic Information → App-Level Tokens** и создайте token со scope `connections:write`. Скопируйте полученный `xapp-…` — Slack показывает его только один раз.
+2. Откройте **OAuth & Permissions**, установите приложение в workspace и скопируйте **Bot User OAuth Token** `xoxb-…`.
+3. Пригласите бота в закрытые каналы, сообщения которых требуется сохранять. Наличие `groups:history` само по себе не предоставляет доступ к каналам, участником которых бот не является.
+4. В TeamWork откройте **Интеграции → Slack**, укажите название workspace, `xoxb-…` и `xapp-…`, затем нажмите **Подключить Slack workspace**.
+
+Scope `commands` обязателен для регистрации message shortcut, даже если приложение не использует slash-команды. Публичный Request URL, Events API и внешний сервер не требуются. Если приложение будет работать только в публичных каналах, необязательные scopes `groups:history`, `im:history` и `mpim:history` можно удалить из манифеста. После изменения scopes переустановите приложение в workspace.
+
+Можно подключить несколько workspaces. Токены каждого workspace сохраняются только в системном Secret Broker.
+
+### Настройка OneNote
+
+1. Создайте public-client application в Microsoft Entra. Для личного OneNote выберите supported account type **Accounts in any organizational directory and personal Microsoft accounts**.
+2. Добавьте delegated permissions `User.Read`, `Notes.ReadWrite` и `offline_access`.
+3. Добавьте redirect URI типа **Mobile and desktop applications**: `http://localhost` — без пути и без номера порта.
+4. Разрешите public client flows.
+5. Введите application/client ID в TeamWork и выполните вход в OneNote.
+
+Client secret не используется. OAuth callback запускается на свободном локальном loopback-порту; Microsoft сопоставляет его с зарегистрированным `http://localhost`. Connector находит секцию `Operation Notes`, а при её отсутствии создаёт её в первом доступном notebook.
+
+### Сохранение
+
+В Slack выберите сообщение → More actions → Save to OneNote. Modal позволяет выбрать:
+
+- только выбранное сообщение или весь thread;
+- существующую страницу `Operation Notes` или создание новой страницы;
+- OneNote account;
+- название новой страницы.
+
+Thread загружается полностью с пагинацией. Операция выполняется асинхронно, результат отправляется пользователю ephemeral-сообщением, а локальная связь Slack ↔ OneNote сохраняется workflow-модулем.
 
 ## Работа с задачами
 
@@ -246,6 +325,9 @@ Manifest объявляет идентификатор, версию прото�
 (cd modules/activity-go && go test ./... && go vet ./...)
 (cd modules/project-view-go && go test ./... && go vet ./...)
 (cd modules/jira-go && go test ./... && go vet ./...)
+(cd modules/slack-go && go test ./... && go vet ./...)
+(cd modules/onenote-go && go test ./... && go vet ./...)
+(cd modules/slack-onenote-go && go test ./... && go vet ./...)
 ```
 
 ```bash
