@@ -11,6 +11,7 @@ import (
 )
 
 var validID = regexp.MustCompile(`^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$`)
+var validVersion = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$`)
 
 type Manifest struct {
 	SchemaVersion int `json:"schemaVersion"`
@@ -38,14 +39,44 @@ func Load(path string) (Manifest, error) {
 	if err := json.Unmarshal(data, &value); err != nil {
 		return Manifest{}, fmt.Errorf("parse %s: %w", path, err)
 	}
-	if value.SchemaVersion != 1 || !validID.MatchString(value.Module.ID) || value.Module.ProtocolVersion != "1" {
+	if value.SchemaVersion != 1 || !validID.MatchString(value.Module.ID) || strings.TrimSpace(value.Module.Name) == "" || !validVersion.MatchString(value.Module.Version) || value.Module.ProtocolVersion != "1" {
 		return Manifest{}, fmt.Errorf("invalid or incompatible manifest: %s", path)
+	}
+	if value.Runtime.Restart != "" && value.Runtime.Restart != "never" && value.Runtime.Restart != "on-failure" {
+		return Manifest{}, fmt.Errorf("invalid restart policy for module %s: %s", value.Module.ID, value.Runtime.Restart)
+	}
+	if duplicate := firstDuplicate(value.Provides); duplicate != "" {
+		return Manifest{}, fmt.Errorf("module %s provides capability more than once: %s", value.Module.ID, duplicate)
+	}
+	if duplicate := firstDuplicate(value.Subscribes); duplicate != "" {
+		return Manifest{}, fmt.Errorf("module %s subscribes more than once: %s", value.Module.ID, duplicate)
+	}
+	for _, capability := range value.Provides {
+		if !validID.MatchString(capability) {
+			return Manifest{}, fmt.Errorf("module %s has invalid capability name: %s", value.Module.ID, capability)
+		}
+	}
+	for _, eventType := range value.Subscribes {
+		if eventType != "*" && !validID.MatchString(eventType) {
+			return Manifest{}, fmt.Errorf("module %s has invalid event name: %s", value.Module.ID, eventType)
+		}
 	}
 	value.Dir = filepath.Dir(path)
 	if _, err := value.Executable(); err != nil {
 		return Manifest{}, err
 	}
 	return value, nil
+}
+
+func firstDuplicate(values []string) string {
+	seen := map[string]bool{}
+	for _, value := range values {
+		if seen[value] {
+			return value
+		}
+		seen[value] = true
+	}
+	return ""
 }
 
 func (m Manifest) Executable() (string, error) {

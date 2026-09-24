@@ -464,7 +464,7 @@ func main() {
 		return page, err
 	})
 	go func() {
-		time.Sleep(1500 * time.Millisecond)
+		<-runtime.Ready()
 		repo.mu.RLock()
 		accounts := append([]Account(nil), repo.state.Accounts...)
 		repo.mu.RUnlock()
@@ -473,7 +473,9 @@ func main() {
 			_, _, refreshErr := repo.fetchPages(ctx, runtime, account)
 			cancel()
 			if refreshErr != nil {
-				_ = runtime.Log(context.Background(), "warning", "OneNote page cache refresh failed", map[string]any{"accountId": account.ID, "error": refreshErr.Error()})
+				logCtx, logCancel := context.WithTimeout(context.Background(), 5*time.Second)
+				_ = runtime.Log(logCtx, "warn", "OneNote page cache refresh failed", map[string]any{"accountId": account.ID, "error": refreshErr.Error()})
+				logCancel()
 			}
 		}
 	}()

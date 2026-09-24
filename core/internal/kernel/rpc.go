@@ -31,6 +31,8 @@ type rpcError struct {
 type connection struct {
 	moduleID  string
 	conn      net.Conn
+	done      chan struct{}
+	doneOnce  sync.Once
 	writeMu   sync.Mutex
 	pendingMu sync.Mutex
 	pending   map[string]chan rpcMessage
@@ -69,6 +71,8 @@ func (c *connection) request(ctx context.Context, method string, params any) (js
 			return nil, errors.New(message.Error.Message)
 		}
 		return message.Result, nil
+	case <-c.done:
+		return nil, fmt.Errorf("module connection closed")
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
@@ -98,8 +102,9 @@ func (k *Kernel) startRPC() error {
 }
 
 func (k *Kernel) serveConnection(raw net.Conn) {
-	c := &connection{conn: raw, pending: map[string]chan rpcMessage{}}
+	c := &connection{conn: raw, done: make(chan struct{}), pending: map[string]chan rpcMessage{}}
 	defer func() {
+		c.doneOnce.Do(func() { close(c.done) })
 		raw.Close()
 		if c.moduleID != "" {
 			k.connectionsMu.Lock()
@@ -141,6 +146,7 @@ func (k *Kernel) serveConnection(raw net.Conn) {
 			k.connectionsMu.Unlock()
 			result, _ := json.Marshal(map[string]any{"accepted": true, "protocolVersion": "1"})
 			_ = c.send(rpcMessage{JSONRPC: "2.0", ID: message.ID, Result: result})
+			go k.retryDeliveries(c)
 			continue
 		}
 		go k.handleModuleRequest(c, message)

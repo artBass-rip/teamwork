@@ -219,7 +219,9 @@ func (r *repository) startSocket(parent context.Context, runtime *sdk.Runtime, a
 					if stringValue(mapValue(payload, "view", "callback_id")) != "teamwork_slack_onenote" {
 						continue
 					}
-					_ = runtime.Publish(ctx, "slack.onenote.save-submitted", map[string]any{"slackAccountId": a.ID, "privateMetadata": stringValue(mapValue(payload, "view", "private_metadata")), "values": viewValues(payload), "userId": stringValue(mapValue(payload, "user", "id"))})
+					if publishErr := runtime.Publish(ctx, "slack.onenote.save-submitted", map[string]any{"slackAccountId": a.ID, "privateMetadata": stringValue(mapValue(payload, "view", "private_metadata")), "values": viewValues(payload), "userId": stringValue(mapValue(payload, "user", "id"))}); publishErr != nil {
+						_ = runtime.Log(ctx, "error", "Slack OneNote submission failed", map[string]any{"accountId": a.ID, "error": publishErr.Error()})
+					}
 				}
 			}
 			conn.Close()
@@ -397,7 +399,11 @@ func main() {
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- runtime.Serve(rootCtx) }()
 	go func() {
-		time.Sleep(750 * time.Millisecond)
+		select {
+		case <-runtime.Ready():
+		case <-rootCtx.Done():
+			return
+		}
 		repo.mu.RLock()
 		accounts := append([]Account(nil), repo.state.Accounts...)
 		repo.mu.RUnlock()

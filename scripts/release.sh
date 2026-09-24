@@ -8,27 +8,26 @@ for platform in darwin-arm64 darwin-amd64 linux-arm64 linux-amd64; do
   target_os=${platform%-*}
   target_arch=${platform#*-}
   output="$root_dir/dist/$platform"
-  mkdir -p "$output/modules/teamwork.echo/bin/$platform" "$output/modules/teamwork.activity/bin/$platform"
-  mkdir -p "$output/modules/teamwork.project-view/bin/$platform"
-  mkdir -p "$output/modules/teamwork.jira/bin/$platform"
-  mkdir -p "$output/modules/teamwork.slack/bin/$platform"
-  mkdir -p "$output/modules/teamwork.onenote/bin/$platform"
-  mkdir -p "$output/modules/teamwork.workflow.slack-onenote/bin/$platform"
+  mkdir -p "$output/modules"
   (cd "$root_dir/core" && CGO_ENABLED=0 GOOS="$target_os" GOARCH="$target_arch" "$go_command" build -trimpath -ldflags='-s -w' -o "$output/teamwork" ./cmd/teamwork)
-  (cd "$root_dir/modules/echo-go" && CGO_ENABLED=0 GOOS="$target_os" GOARCH="$target_arch" "$go_command" build -trimpath -ldflags='-s -w' -o "$output/modules/teamwork.echo/bin/$platform/teamwork-echo" .)
-  (cd "$root_dir/modules/activity-go" && CGO_ENABLED=0 GOOS="$target_os" GOARCH="$target_arch" "$go_command" build -trimpath -ldflags='-s -w' -o "$output/modules/teamwork.activity/bin/$platform/teamwork-activity" .)
-  (cd "$root_dir/modules/project-view-go" && CGO_ENABLED=0 GOOS="$target_os" GOARCH="$target_arch" "$go_command" build -trimpath -ldflags='-s -w' -o "$output/modules/teamwork.project-view/bin/$platform/teamwork-project-view" .)
-  (cd "$root_dir/modules/jira-go" && CGO_ENABLED=0 GOOS="$target_os" GOARCH="$target_arch" "$go_command" build -trimpath -ldflags='-s -w' -o "$output/modules/teamwork.jira/bin/$platform/teamwork-jira" .)
-  (cd "$root_dir/modules/slack-go" && CGO_ENABLED=0 GOOS="$target_os" GOARCH="$target_arch" "$go_command" build -trimpath -ldflags='-s -w' -o "$output/modules/teamwork.slack/bin/$platform/teamwork-slack" .)
-  (cd "$root_dir/modules/onenote-go" && CGO_ENABLED=0 GOOS="$target_os" GOARCH="$target_arch" "$go_command" build -trimpath -ldflags='-s -w' -o "$output/modules/teamwork.onenote/bin/$platform/teamwork-onenote" .)
-  (cd "$root_dir/modules/slack-onenote-go" && CGO_ENABLED=0 GOOS="$target_os" GOARCH="$target_arch" "$go_command" build -trimpath -ldflags='-s -w' -o "$output/modules/teamwork.workflow.slack-onenote/bin/$platform/teamwork-slack-onenote" .)
-  cp "$root_dir/modules/echo-go/module.json" "$output/modules/teamwork.echo/module.json"
-  cp "$root_dir/modules/activity-go/module.json" "$output/modules/teamwork.activity/module.json"
-  cp "$root_dir/modules/project-view-go/module.json" "$output/modules/teamwork.project-view/module.json"
-  cp "$root_dir/modules/jira-go/module.json" "$output/modules/teamwork.jira/module.json"
-  cp "$root_dir/modules/slack-go/module.json" "$output/modules/teamwork.slack/module.json"
-  cp "$root_dir/modules/onenote-go/module.json" "$output/modules/teamwork.onenote/module.json"
-  cp "$root_dir/modules/slack-onenote-go/module.json" "$output/modules/teamwork.workflow.slack-onenote/module.json"
+  for module_dir in "$root_dir"/modules/*; do
+    [ -f "$module_dir/module.json" ] || continue
+    module_id=$(sed -n 's/.*"id": *"\([^"]*\)".*/\1/p' "$module_dir/module.json" | head -n 1)
+    binary_path=$(sed -n "s/.*\"$platform\": *\"\([^\"]*\)\".*/\1/p" "$module_dir/module.json" | head -n 1)
+    [ -n "$module_id" ] || { echo "Missing module id in $module_dir/module.json" >&2; exit 1; }
+    [ -n "$binary_path" ] || continue
+    module_output="$output/modules/$module_id"
+    mkdir -p "$module_output/$(dirname "$binary_path")"
+    if [ -f "$module_dir/go.mod" ]; then
+      (cd "$module_dir" && CGO_ENABLED=0 GOOS="$target_os" GOARCH="$target_arch" "$go_command" build -trimpath -ldflags='-s -w' -o "$module_output/$binary_path" .)
+    elif [ -f "$module_dir/$binary_path" ]; then
+      cp "$module_dir/$binary_path" "$module_output/$binary_path"
+    else
+      echo "Missing $platform executable for $module_id: $module_dir/$binary_path" >&2
+      exit 1
+    fi
+    cp "$module_dir/module.json" "$module_output/module.json"
+  done
 done
 
 echo "Release binaries created in dist"

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "module": {"id": "teamwork.project-view", "name": "Project View", "version": "1.11.0", "protocolVersion": "1"},
+  "module": {"id": "teamwork.project-view", "name": "Project View", "version": "1.13.1", "protocolVersion": "1"},
   "runtime": {"restart": "on-failure"},
   "executables": {
     "darwin-arm64": "bin/darwin-arm64/teamwork-project-view",
@@ -8,6 +8,6 @@
     "linux-arm64": "bin/linux-arm64/teamwork-project-view",
     "linux-amd64": "bin/linux-amd64/teamwork-project-view"
   },
-  "provides": ["ui.app.render", "projectview.state", "projectview.import", "projectview.issue.update", "projectview.label.delete", "projectview.labels.apply", "projectview.sync"],
+  "provides": ["ui.app.render", "projectview.state", "projectview.import", "projectview.issue.update", "projectview.comment.update", "projectview.comment.delete", "projectview.label.delete", "projectview.labels.apply", "projectview.sync"],
   "subscribes": []
 }

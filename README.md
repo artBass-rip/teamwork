@@ -2,7 +2,7 @@
 
 TeamWork — локальный Integration Hub для персональной работы с Jira и последующего подключения Slack, OneNote и других сервисов. Продукт построен вокруг лёгкого Go microkernel: ядро отвечает только за запуск, безопасность и взаимодействие модулей, а вся прикладная функциональность поставляется отдельными portable executable subprocess.
 
-Текущая версия: `2.0.0-alpha.1`.
+Текущая версия: `2.0.0-alpha.2`.
 
 ## Что уже работает
 
@@ -10,7 +10,7 @@ TeamWork — локальный Integration Hub для персональной 
 - отдельный локальный subprocess для каждого модуля;
 - Unix Domain Socket JSON-RPC 2.0 с правами `0600` и одноразовым IPC-токеном процесса;
 - обнаружение portable-модулей по manifest и автоматический restart после сбоя;
-- capability router и durable event bus;
+- capability router и durable event bus с состоянием доставки в SQLite;
 - SQLite/WAL для состояния ядра, событий и логов;
 - уровни логирования `DEBUG`, `INFO`, `WARN`, `ERROR`, фильтрация в UI и retention 48 часов;
 - системное хранилище секретов: macOS Keychain или Linux Secret Service;
@@ -54,7 +54,7 @@ Browser / local API clients
 1. Модуль является автономным исполняемым файлом и запускается ядром как отдельный subprocess.
 2. Модули не импортируют код и не вызывают процессы друг друга напрямую.
 3. Вызовы проходят через именованные capabilities ядра.
-4. События доставляются как минимум один раз, поэтому обработчики должны быть идемпотентными.
+4. События доставляются как минимум один раз: результат каждой попытки фиксируется в SQLite, а pending/failed delivery повторяется после регистрации subscriber. Обработчики должны быть идемпотентными.
 5. Секреты не хранятся в SQLite, manifest, исходном коде или state-файлах модулей.
 6. Новый модуль подключается размещением каталога с `module.json` и бинарником нужной платформы.
 
@@ -316,18 +316,20 @@ Manifest объявляет идентификатор, версию прото�
 
 Модуль может быть написан на любом языке, если он выпускается как автономный executable и реализует protocol v1. Go SDK в `sdk/go` является референсной реализацией, а не обязательной зависимостью.
 
+Go-модуль должен дождаться `Runtime.Ready()` перед фоновыми RPC-вызовами. SDK открывает readiness только после подтверждённой регистрации и немедленно завершает ожидающие вызовы при потере связи с ядром.
+
 ## Разработка и проверки
 
 ```bash
-(cd core && go test ./... && go vet ./...)
-(cd sdk/go && go test ./... && go vet ./...)
-(cd modules/echo-go && go test ./... && go vet ./...)
-(cd modules/activity-go && go test ./... && go vet ./...)
-(cd modules/project-view-go && go test ./... && go vet ./...)
-(cd modules/jira-go && go test ./... && go vet ./...)
-(cd modules/slack-go && go test ./... && go vet ./...)
-(cd modules/onenote-go && go test ./... && go vet ./...)
-(cd modules/slack-onenote-go && go test ./... && go vet ./...)
+(cd core && go test -race ./... && go vet ./...)
+(cd sdk/go && go test -race ./... && go vet ./...)
+(cd modules/echo-go && go test -race ./... && go vet ./...)
+(cd modules/activity-go && go test -race ./... && go vet ./...)
+(cd modules/project-view-go && go test -race ./... && go vet ./...)
+(cd modules/jira-go && go test -race ./... && go vet ./...)
+(cd modules/slack-go && go test -race ./... && go vet ./...)
+(cd modules/onenote-go && go test -race ./... && go vet ./...)
+(cd modules/slack-onenote-go && go test -race ./... && go vet ./...)
 ```
 
 ```bash

@@ -13,6 +13,12 @@ import (
 
 type Handler func(context.Context, map[string]any) (any, error)
 type EventHandler func(context.Context, map[string]any) error
+type PublishResult struct {
+	EventID   string            `json:"event_id"`
+	Delivered []string          `json:"delivered"`
+	Pending   []string          `json:"pending"`
+	Failed    map[string]string `json:"failed"`
+}
 type message struct {
 	JSONRPC string          `json:"jsonrpc"`
 	ID      string          `json:"id,omitempty"`
@@ -29,6 +35,10 @@ type Runtime struct {
 	moduleID, token, socket string
 	conn                    net.Conn
 	writeMu                 sync.Mutex
+	ready                   chan struct{}
+	done                    chan struct{}
+	readyOnce               sync.Once
+	doneOnce                sync.Once
 	sequence                atomic.Uint64
 	pendingMu               sync.Mutex
 	pending                 map[string]chan message
@@ -37,7 +47,7 @@ type Runtime struct {
 }
 
 func New() *Runtime {
-	return &Runtime{moduleID: os.Getenv("TEAMWORK_MODULE_ID"), token: os.Getenv("TEAMWORK_MODULE_TOKEN"), socket: os.Getenv("TEAMWORK_CORE_SOCKET"), pending: map[string]chan message{}, capabilities: map[string]Handler{}, events: map[string][]EventHandler{}}
+	return &Runtime{moduleID: os.Getenv("TEAMWORK_MODULE_ID"), token: os.Getenv("TEAMWORK_MODULE_TOKEN"), socket: os.Getenv("TEAMWORK_CORE_SOCKET"), ready: make(chan struct{}), done: make(chan struct{}), pending: map[string]chan message{}, capabilities: map[string]Handler{}, events: map[string][]EventHandler{}}
 }
 func (r *Runtime) Capability(name string, handler Handler) { r.capabilities[name] = handler }
 func (r *Runtime) On(name string, handler EventHandler) {
@@ -56,9 +66,22 @@ func (r *Runtime) send(value message) error {
 func (r *Runtime) Serve(ctx context.Context) error {
 	conn, err := net.Dial("unix", r.socket)
 	if err != nil {
+		r.doneOnce.Do(func() { close(r.done) })
 		return err
 	}
+	return r.serveConn(ctx, conn)
+}
+func (r *Runtime) serveConn(ctx context.Context, conn net.Conn) error {
+	defer r.doneOnce.Do(func() { close(r.done) })
+	defer conn.Close()
 	r.conn = conn
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = conn.Close()
+		case <-r.done:
+		}
+	}()
 	params, _ := json.Marshal(map[string]any{"module_id": r.moduleID, "token": r.token, "protocol_version": "1"})
 	if err := r.send(message{JSONRPC: "2.0", ID: "register", Method: "module.register", Params: params}); err != nil {
 		return err
@@ -67,10 +90,17 @@ func (r *Runtime) Serve(ctx context.Context) error {
 	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
 	for scanner.Scan() {
 		var msg message
-		if json.Unmarshal(scanner.Bytes(), &msg) != nil {
+		if err := json.Unmarshal(scanner.Bytes(), &msg); err != nil {
 			continue
 		}
 		if msg.Method == "" {
+			if msg.ID == "register" {
+				if msg.Error != nil {
+					return fmt.Errorf("module registration failed: %s", msg.Error.Message)
+				}
+				r.readyOnce.Do(func() { close(r.ready) })
+				continue
+			}
 			r.pendingMu.Lock()
 			target := r.pending[msg.ID]
 			r.pendingMu.Unlock()
@@ -81,8 +111,13 @@ func (r *Runtime) Serve(ctx context.Context) error {
 		}
 		go r.dispatch(ctx, msg)
 	}
-	return scanner.Err()
+	if err := scanner.Err(); err != nil {
+		return err
+	}
+	return fmt.Errorf("core connection closed")
 }
+
+func (r *Runtime) Ready() <-chan struct{} { return r.ready }
 func (r *Runtime) dispatch(ctx context.Context, msg message) {
 	var params map[string]any
 	_ = json.Unmarshal(msg.Params, &params)
@@ -120,6 +155,23 @@ func (r *Runtime) dispatch(ctx context.Context, msg message) {
 	_ = r.send(response)
 }
 func (r *Runtime) request(ctx context.Context, method string, params any) (json.RawMessage, error) {
+	select {
+	case <-r.done:
+		return nil, fmt.Errorf("runtime is not connected")
+	default:
+	}
+	select {
+	case <-r.ready:
+	case <-r.done:
+		return nil, fmt.Errorf("runtime is not connected")
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	select {
+	case <-r.done:
+		return nil, fmt.Errorf("core connection closed")
+	default:
+	}
 	id := fmt.Sprintf("module-%d", r.sequence.Add(1))
 	encoded, err := json.Marshal(params)
 	if err != nil {
@@ -139,13 +191,33 @@ func (r *Runtime) request(ctx context.Context, method string, params any) (json.
 			return nil, fmt.Errorf("%s", response.Error.Message)
 		}
 		return response.Result, nil
+	case <-r.done:
+		return nil, fmt.Errorf("core connection closed")
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
 }
 func (r *Runtime) Publish(ctx context.Context, eventType string, payload any) error {
-	_, err := r.request(ctx, "event.publish", map[string]any{"event_type": eventType, "payload": payload})
-	return err
+	result, err := r.PublishDetailed(ctx, eventType, payload)
+	if err != nil {
+		return err
+	}
+	if len(result.Failed) > 0 {
+		return fmt.Errorf("event %s delivery failed: %v", result.EventID, result.Failed)
+	}
+	if len(result.Pending) > 0 {
+		return fmt.Errorf("event %s is pending for unavailable modules: %v", result.EventID, result.Pending)
+	}
+	return nil
+}
+func (r *Runtime) PublishDetailed(ctx context.Context, eventType string, payload any) (PublishResult, error) {
+	raw, err := r.request(ctx, "event.publish", map[string]any{"event_type": eventType, "payload": payload})
+	if err != nil {
+		return PublishResult{}, err
+	}
+	var result PublishResult
+	err = json.Unmarshal(raw, &result)
+	return result, err
 }
 func (r *Runtime) Log(ctx context.Context, level, message string, fields map[string]any) error {
 	_, err := r.request(ctx, "log.write", map[string]any{"level": level, "message": message, "fields": fields})

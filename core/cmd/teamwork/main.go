@@ -18,7 +18,7 @@ import (
 	"teamwork/core/internal/service"
 )
 
-var version = "2.0.0-alpha.1"
+var version = "2.0.0-alpha.2"
 
 func main() {
 	if err := run(); err != nil {

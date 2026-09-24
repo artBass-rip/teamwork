@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "module": {"id": "teamwork.onenote", "name": "OneNote", "version": "0.2.0", "protocolVersion": "1"},
+  "module": {"id": "teamwork.onenote", "name": "OneNote", "version": "0.2.1", "protocolVersion": "1"},
   "runtime": {"restart": "on-failure"},
   "executables": {
     "darwin-arm64": "bin/darwin-arm64/teamwork-onenote",

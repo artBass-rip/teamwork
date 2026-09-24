@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"sort"
 	"sync"
 	"time"
 
@@ -131,20 +132,52 @@ func (k *Kernel) reconcile() error {
 		current[id] = item
 	}
 	k.mu.RUnlock()
-	for id, item := range current {
-		next, ok := found[id]
-		if !ok || next.Module.Version != item.Module.Version {
-			k.unregister(id)
+	remove, start := reconcilePlan(current, found)
+	removing := map[string]bool{}
+	for _, id := range remove {
+		removing[id] = true
+		k.unregister(id)
+	}
+	for _, item := range start {
+		if err := k.register(item); err != nil {
+			return err
 		}
 	}
 	for id, item := range found {
-		if _, ok := current[id]; !ok {
-			if err := k.register(item); err != nil {
-				return err
+		if removing[id] || item.Runtime.Restart != "on-failure" || k.supervisor.running(id) {
+			continue
+		}
+		if currentItem, ok := current[id]; ok && currentItem.Module.Version == item.Module.Version {
+			if err := k.supervisor.start(k.ctx, item, k.paths.Socket, k.paths.Data); err != nil {
+				k.logger.Warn("module restart failed", "module", id, "error", err)
 			}
 		}
 	}
 	return nil
+}
+
+func reconcilePlan(current, found map[string]manifest.Manifest) ([]string, []manifest.Manifest) {
+	remove := []string{}
+	startIDs := []string{}
+	for id, item := range current {
+		next, ok := found[id]
+		if !ok || next.Module.Version != item.Module.Version {
+			remove = append(remove, id)
+		}
+	}
+	for id, item := range found {
+		currentItem, ok := current[id]
+		if !ok || currentItem.Module.Version != item.Module.Version {
+			startIDs = append(startIDs, id)
+		}
+	}
+	sort.Strings(remove)
+	sort.Strings(startIDs)
+	start := make([]manifest.Manifest, 0, len(startIDs))
+	for _, id := range startIDs {
+		start = append(start, found[id])
+	}
+	return remove, start
 }
 
 func (k *Kernel) watch() {
@@ -210,12 +243,15 @@ func (k *Kernel) Publish(ctx context.Context, producer, eventType string, payloa
 	}
 	k.mu.RUnlock()
 	delivered := []string{}
+	pending := []string{}
+	failed := map[string]string{}
 	for moduleID := range targets {
 		k.connectionsMu.RLock()
 		connection := k.connections[moduleID]
 		k.connectionsMu.RUnlock()
 		if connection == nil {
 			_ = k.store.Delivery(eventID, moduleID, "pending", "module unavailable")
+			pending = append(pending, moduleID)
 			continue
 		}
 		callCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -223,12 +259,35 @@ func (k *Kernel) Publish(ctx context.Context, producer, eventType string, payloa
 		cancel()
 		if err != nil {
 			_ = k.store.Delivery(eventID, moduleID, "failed", err.Error())
+			failed[moduleID] = err.Error()
 		} else {
 			_ = k.store.Delivery(eventID, moduleID, "completed", "")
 			delivered = append(delivered, moduleID)
 		}
 	}
-	return map[string]any{"event_id": eventID, "delivered": delivered}, nil
+	sort.Strings(delivered)
+	sort.Strings(pending)
+	return map[string]any{"event_id": eventID, "delivered": delivered, "pending": pending, "failed": failed}, nil
+}
+
+func (k *Kernel) retryDeliveries(connection *connection) {
+	events, err := k.store.PendingDeliveries(connection.moduleID, 1000)
+	if err != nil {
+		k.logger.Error("pending event lookup failed", "module", connection.moduleID, "error", err)
+		return
+	}
+	for _, event := range events {
+		ctx, cancel := context.WithTimeout(k.ctx, 30*time.Second)
+		_, deliveryErr := connection.request(ctx, "event.deliver", map[string]any{"id": event.ID, "event_type": event.Type, "producer": event.Producer, "payload": event.Payload})
+		cancel()
+		if deliveryErr != nil {
+			_ = k.store.Delivery(event.ID, connection.moduleID, "failed", deliveryErr.Error())
+			k.logger.Warn("pending event delivery failed", "module", connection.moduleID, "event", event.ID, "error", deliveryErr)
+			continue
+		}
+		_ = k.store.Delivery(event.ID, connection.moduleID, "completed", "")
+		k.logger.Info("pending event delivered", "module", connection.moduleID, "event", event.ID)
+	}
 }
 
 func (k *Kernel) Status() map[string]any {
@@ -244,6 +303,7 @@ func (k *Kernel) Status() map[string]any {
 		connected = append(connected, id)
 	}
 	k.connectionsMu.RUnlock()
+	sort.Strings(connected)
 	return map[string]any{"status": "ok", "modules": k.supervisor.status(), "capabilities": caps, "connections": connected}
 }
 func (k *Kernel) RecentEvents(limit int) ([]store.Event, error) { return k.store.Recent(limit) }

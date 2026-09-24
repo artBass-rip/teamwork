@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 
@@ -26,7 +27,6 @@ type supervisor struct {
 	mu        sync.Mutex
 	processes map[string]*processState
 	logger    *slog.Logger
-	stopping  bool
 }
 
 func newSupervisor(logger *slog.Logger) *supervisor {
@@ -72,17 +72,10 @@ func (s *supervisor) start(ctx context.Context, item manifest.Manifest, socket, 
 		s.logger.Info("module stopped", "module", item.Module.ID, "error", err)
 		s.mu.Lock()
 		current := s.processes[item.Module.ID]
-		restart := current == state && !s.stopping && item.Runtime.Restart == "on-failure" && err != nil
 		if current == state {
 			delete(s.processes, item.Module.ID)
 		}
 		s.mu.Unlock()
-		if restart {
-			time.Sleep(time.Second)
-			if startErr := s.start(ctx, item, socket, dataRoot); startErr != nil {
-				s.logger.Error("module restart failed", "module", item.Module.ID, "error", startErr)
-			}
-		}
 	}()
 	return nil
 }
@@ -110,7 +103,6 @@ func (s *supervisor) stopAll() {
 	for id := range s.processes {
 		ids = append(ids, id)
 	}
-	s.stopping = true
 	s.mu.Unlock()
 	for _, id := range ids {
 		s.stop(id)
@@ -126,11 +118,23 @@ func (s *supervisor) token(moduleID string) string {
 	return ""
 }
 
+func (s *supervisor) running(moduleID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.processes[moduleID] != nil
+}
+
 func (s *supervisor) status() []map[string]any {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	result := []map[string]any{}
-	for id, p := range s.processes {
+	ids := make([]string, 0, len(s.processes))
+	for id := range s.processes {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		p := s.processes[id]
 		result = append(result, map[string]any{"id": id, "version": p.manifest.Module.Version, "pid": p.cmd.Process.Pid, "running": p.cmd.ProcessState == nil})
 	}
 	return result

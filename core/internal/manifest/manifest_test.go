@@ -33,10 +33,36 @@ func TestLoadSelectsNativeExecutable(t *testing.T) {
 
 func TestRejectsEscapingExecutable(t *testing.T) {
 	dir := t.TempDir()
-	value := `{"schemaVersion":1,"module":{"id":"teamwork.bad","name":"Bad","version":"1","protocolVersion":"1"},"executables":{"` + runtime.GOOS + `-` + runtime.GOARCH + `":"../bad"},"provides":[],"subscribes":[]}`
+	value := `{"schemaVersion":1,"module":{"id":"teamwork.bad","name":"Bad","version":"1.0.0","protocolVersion":"1"},"executables":{"` + runtime.GOOS + `-` + runtime.GOARCH + `":"../bad"},"provides":[],"subscribes":[]}`
 	path := filepath.Join(dir, "module.json")
 	_ = os.WriteFile(path, []byte(value), 0600)
 	if _, err := Load(path); err == nil {
 		t.Fatal("expected escaping executable rejection")
+	}
+}
+
+func TestRejectsInvalidModuleContract(t *testing.T) {
+	tests := map[string]string{
+		"version":    `{"schemaVersion":1,"module":{"id":"teamwork.example","name":"Example","version":"latest","protocolVersion":"1"},"runtime":{"restart":"on-failure"},"executables":{"` + runtime.GOOS + `-` + runtime.GOARCH + `":"bin/example"},"provides":[],"subscribes":[]}`,
+		"restart":    `{"schemaVersion":1,"module":{"id":"teamwork.example","name":"Example","version":"1.0.0","protocolVersion":"1"},"runtime":{"restart":"always"},"executables":{"` + runtime.GOOS + `-` + runtime.GOARCH + `":"bin/example"},"provides":[],"subscribes":[]}`,
+		"duplicates": `{"schemaVersion":1,"module":{"id":"teamwork.example","name":"Example","version":"1.0.0","protocolVersion":"1"},"runtime":{"restart":"on-failure"},"executables":{"` + runtime.GOOS + `-` + runtime.GOARCH + `":"bin/example"},"provides":["example.echo","example.echo"],"subscribes":[]}`,
+	}
+	for name, value := range tests {
+		t.Run(name, func(t *testing.T) {
+			directory := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(directory, "bin"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(directory, "bin", "example"), []byte("binary"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(directory, "module.json")
+			if err := os.WriteFile(path, []byte(value), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Load(path); err == nil {
+				t.Fatal("expected invalid manifest error")
+			}
+		})
 	}
 }

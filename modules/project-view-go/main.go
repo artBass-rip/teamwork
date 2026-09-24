@@ -39,6 +39,7 @@ type Comment struct {
 	ID        string `json:"id"`
 	Text      string `json:"text"`
 	CreatedAt string `json:"createdAt"`
+	UpdatedAt string `json:"updatedAt,omitempty"`
 }
 type Project struct {
 	Key        string  `json:"key"`
@@ -214,6 +215,57 @@ func (r *repository) updateIssue(payload map[string]any) (State, error) {
 	return State{}, fmt.Errorf("issue %s/%s not found", projectKey, issueKey)
 }
 
+func (r *repository) updateComment(projectKey, issueKey, commentID, text string) (State, error) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return State{}, fmt.Errorf("comment text is required")
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for pi := range r.state.Projects {
+		if r.state.Projects[pi].Key != projectKey {
+			continue
+		}
+		for ii := range r.state.Projects[pi].Issues {
+			issue := &r.state.Projects[pi].Issues[ii]
+			if issue.Key != issueKey {
+				continue
+			}
+			for ci := range issue.Comments {
+				if issue.Comments[ci].ID == commentID {
+					issue.Comments[ci].Text = text
+					issue.Comments[ci].UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+					return r.state, r.saveLocked()
+				}
+			}
+		}
+	}
+	return State{}, fmt.Errorf("comment %s not found", commentID)
+}
+
+func (r *repository) deleteComment(projectKey, issueKey, commentID string) (State, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for pi := range r.state.Projects {
+		if r.state.Projects[pi].Key != projectKey {
+			continue
+		}
+		for ii := range r.state.Projects[pi].Issues {
+			issue := &r.state.Projects[pi].Issues[ii]
+			if issue.Key != issueKey {
+				continue
+			}
+			for ci := range issue.Comments {
+				if issue.Comments[ci].ID == commentID {
+					issue.Comments = append(issue.Comments[:ci], issue.Comments[ci+1:]...)
+					return r.state, r.saveLocked()
+				}
+			}
+		}
+	}
+	return State{}, fmt.Errorf("comment %s not found", commentID)
+}
+
 func (r *repository) deleteLabel(raw string) (State, error) {
 	label := strings.TrimSpace(raw)
 	if label == "" {
@@ -315,6 +367,20 @@ func main() {
 		state, err := repo.updateIssue(payload)
 		if err == nil {
 			_ = runtime.Publish(ctx, "projectview.issue.updated", map[string]any{"issue": payload["issueKey"]})
+		}
+		return state, err
+	})
+	runtime.Capability("projectview.comment.update", func(ctx context.Context, payload map[string]any) (any, error) {
+		state, err := repo.updateComment(fmt.Sprint(payload["projectKey"]), fmt.Sprint(payload["issueKey"]), fmt.Sprint(payload["commentId"]), fmt.Sprint(payload["text"]))
+		if err == nil {
+			_ = runtime.Publish(ctx, "projectview.comment.updated", map[string]any{"issue": payload["issueKey"], "commentId": payload["commentId"]})
+		}
+		return state, err
+	})
+	runtime.Capability("projectview.comment.delete", func(ctx context.Context, payload map[string]any) (any, error) {
+		state, err := repo.deleteComment(fmt.Sprint(payload["projectKey"]), fmt.Sprint(payload["issueKey"]), fmt.Sprint(payload["commentId"]))
+		if err == nil {
+			_ = runtime.Publish(ctx, "projectview.comment.deleted", map[string]any{"issue": payload["issueKey"], "commentId": payload["commentId"]})
 		}
 		return state, err
 	})

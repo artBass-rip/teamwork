@@ -4,6 +4,14 @@
 
 ## [Unreleased]
 
+### Refactoring and reliability
+
+- исправлен hot reload: модуль с новой версией теперь запускается после остановки старого subprocess;
+- microkernel повторно поднимает аварийно завершившиеся `on-failure` модули через reconcile без гонок и одноразовых retry;
+- Go runtime SDK получил явное состояние готовности, корректное завершение pending RPC при разрыве соединения и тесты транспорта;
+- события возвращают результаты доставки по каждому subscriber, pending/failed delivery воспроизводится после переподключения, а ошибки workflow больше не теряются;
+- manifest validation проверяет SemVer, restart policy, имена capabilities/events и дубликаты до запуска executable;
+
 ### Planned
 
 - синхронизация новых ответов в ранее сохранённом Slack thread;
@@ -25,6 +33,10 @@
 - Slack → OneNote workflow subprocess, локальные связи и ephemeral-уведомления;
 - открытие Slack modal больше не зависит от задержки Microsoft Graph: страницы OneNote кэшируются локально и обновляются в фоне;
 - журналирование входящих Slack interactions и ошибок `views.open`;
+- локальные метки в инспекторе задачи выбираются через searchable dropdown с мультивыбором и созданием новых значений;
+- секция локальных комментариев снова постоянно отображается под названием задачи, включая явное пустое состояние;
+- локальные комментарии можно редактировать и удалять непосредственно в инспекторе задачи;
+- отдельный раздел «Спринты» удалён из навигации; группировка по спринтам осталась подвкладкой проектов;
 
 - Go microkernel, localhost HTTP shell и portable subprocess supervisor;
 - Unix Domain Socket JSON-RPC 2.0 transport и protocol v1;

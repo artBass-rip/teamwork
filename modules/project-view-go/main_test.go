@@ -29,6 +29,39 @@ func TestImportPreservesLocalComments(t *testing.T) {
 	}
 }
 
+func TestUpdateAndDeleteLocalComment(t *testing.T) {
+	repo, err := openRepository(t.TempDir() + "/state.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = repo.importProject(map[string]any{
+		"key": "TEAM", "name": "Team", "issues": []any{map[string]any{"key": "TEAM-1", "title": "Task"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := repo.updateIssue(map[string]any{"projectKey": "TEAM", "issueKey": "TEAM-1", "comment": "Original"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	commentID := state.Projects[0].Issues[0].Comments[0].ID
+	state, err = repo.updateComment("TEAM", "TEAM-1", commentID, "Edited")
+	if err != nil {
+		t.Fatal(err)
+	}
+	comment := state.Projects[0].Issues[0].Comments[0]
+	if comment.Text != "Edited" || comment.UpdatedAt == "" {
+		t.Fatalf("comment was not updated: %#v", comment)
+	}
+	state, err = repo.deleteComment("TEAM", "TEAM-1", commentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Projects[0].Issues[0].Comments) != 0 {
+		t.Fatalf("comment was not deleted: %#v", state.Projects[0].Issues[0].Comments)
+	}
+}
+
 func TestImportSortsIssueKeysDescending(t *testing.T) {
 	repo, err := openRepository(t.TempDir() + "/state.json")
 	if err != nil {

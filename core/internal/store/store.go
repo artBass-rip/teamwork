@@ -36,7 +36,8 @@ func Open(path string) (*Store, error) {
 CREATE TABLE IF NOT EXISTS events(id TEXT PRIMARY KEY,event_type TEXT NOT NULL,producer TEXT NOT NULL,occurred_at TEXT NOT NULL,payload TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS deliveries(event_id TEXT NOT NULL,module_id TEXT NOT NULL,status TEXT NOT NULL,attempts INTEGER NOT NULL DEFAULT 0,last_error TEXT,PRIMARY KEY(event_id,module_id));
 CREATE TABLE IF NOT EXISTS logs(id INTEGER PRIMARY KEY AUTOINCREMENT,level TEXT NOT NULL,logger TEXT NOT NULL,message TEXT NOT NULL,occurred_at TEXT NOT NULL,fields TEXT NOT NULL DEFAULT '{}');
-CREATE INDEX IF NOT EXISTS logs_occurred_at_idx ON logs(occurred_at);`
+CREATE INDEX IF NOT EXISTS logs_occurred_at_idx ON logs(occurred_at);
+CREATE INDEX IF NOT EXISTS deliveries_module_status_idx ON deliveries(module_id,status);`
 	if _, err := db.Exec(statements); err != nil {
 		db.Close()
 		return nil, err
@@ -105,6 +106,36 @@ func (s *Store) RecordEvent(id, producer, eventType string, payload any) error {
 func (s *Store) Delivery(eventID, moduleID, status, message string) error {
 	_, err := s.db.Exec(`INSERT INTO deliveries VALUES(?,?,?,?,?) ON CONFLICT(event_id,module_id) DO UPDATE SET status=excluded.status,attempts=deliveries.attempts+1,last_error=excluded.last_error`, eventID, moduleID, status, 1, message)
 	return err
+}
+
+func (s *Store) PendingDeliveries(moduleID string, limit int) ([]Event, error) {
+	if limit < 1 {
+		limit = 100
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+	rows, err := s.db.Query(`SELECT e.id,e.event_type,e.producer,e.occurred_at,e.payload
+FROM deliveries d JOIN events e ON e.id=d.event_id
+WHERE d.module_id=? AND d.status!='completed'
+ORDER BY e.occurred_at ASC LIMIT ?`, moduleID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := []Event{}
+	for rows.Next() {
+		var event Event
+		var payload []byte
+		if err := rows.Scan(&event.ID, &event.Type, &event.Producer, &event.OccurredAt, &payload); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(payload, &event.Payload); err != nil {
+			return nil, err
+		}
+		result = append(result, event)
+	}
+	return result, rows.Err()
 }
 
 func (s *Store) Recent(limit int) ([]Event, error) {
